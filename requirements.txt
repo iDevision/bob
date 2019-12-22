@@ -1,0 +1,17 @@
+websockets
+aiohttp
+discord.py[voice]
+jishaku
+parsedatetime
+python-dateutil
+psutil
+aiosqlite3
+beautifulsoup4
+lxml
+wavelink
+pafy
+youtube_dl
+pillow
+colorama
+matplotlib
+numpy
