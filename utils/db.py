@@ -32,45 +32,7 @@ modules = {
 }
 
 module_executors = {
-    "events": "CREATE TABLE IF NOT EXISTS events (guild_id integer, member_join integer, member_join_msg text, member_leave integer, member_leave_msg text);",
-    "rtfm": "CREATE TABLE IF NOT EXISTS default_rtfm (guild_id integer, name text); CREATE TABLE IF NOT EXISTS pages (quick text, long text, url text); CREATE TABLE IF NOT EXISTS waiting (user integer, quick text, long text, url text);--",
-    "reminders": """CREATE TABLE IF NOT EXISTS reminders (guild_id integer, channel_id integer, message text, remind_time real, msg_link text, user_id integer, uuid text);--""",
-    "automod": """CREATE TABLE IF NOT EXISTS automod_ignore (guild_id integer, type text, ignore_id integer);
-    CREATE TABLE IF NOT EXISTS automod_config (guild_id integer, enabled integer, banned_words_punishment integer, message_spam_messages integer, message_spam_delay integer, message_spam_punishment integer, mass_mentions_max integer, mass_mentions_punishment integer, all_caps_punishment integer, all_caps_percent integer, invites_punishment integer, links_punishment integer);
-    CREATE TABLE IF NOT EXISTS automod_banned_words (guild_id integer, word text);--""",
-    "customcommands": """CREATE TABLE IF NOT EXISTS custom_commands (guild_id integer, trigger text, response text, uses integer);--""",
-    "configs": """CREATE TABLE IF NOT EXISTS guild_configs (guild_id integer, announce_streams integer, announce_channel integer, announce_channel_streams integer, mod_logs_channel integer, warns_before_silence integer, prefix text, warn_mute_length integer, automute_safe_role integer, automod_channel integer, premium_code text, premium_authorized integer);--""",
-    "fun": "",
-    "logs": """CREATE TABLE IF NOT EXISTS modlogs (guild_id integer, member_join integer, member_leave integer, member_nickname_change integer, member_isbanned integer, member_isunbanned integer, member_iskicked integer, message_delete integer, message_edit integer, message_bulk_delete integer, role_create integer, role_edit integer, role_delete integer, channel_create integer, channel_edit integer, channel_delete integer, emojis_update integer, channel integer);""",
-    "currency": """CREATE TABLE IF NOT EXISTS currency (guild_id integer, user_id integer, points integer);--""",
-    "community": """CREATE TABLE IF NOT EXISTS poll_nodes (guild_id integer, poll_id text, emoji text, description text);
-    CREATE TABLE IF NOT EXISTS polls (guild_id integer, poll_id text, end integer, endtext text, title text, description text, channel integer, msgid integer);
-    CREATE TABLE IF NOT EXISTS giveaway_settings (guild_id integer, required_points integer, enabled integer, entry_limit integer);
-    CREATE TABLE IF NOT EXISTS giveaway_entries (guild_id integer, user_id integer, times integer);--""",
-    "quotes": """CREATE TABLE IF NOT EXISTS quotes (guild_id integer, manager integer, content text, id integer);--""",
-    "tags": """CREATE TABLE IF NOT EXISTS tags (guild_id integer, name text, response text, owner integer, uses integer);--""",
-    "moderation": """CREATE TABLE IF NOT EXISTS warnings (guild_id integer, user_id integer, moderator integer, reason text, caseno text);
-    CREATE TABLE IF NOT EXISTS moddata (guild_id integer, user_id integer, moderator_id integer, note text, time integer);""",
-    "general": """
-    CREATE TABLE IF NOT EXISTS module_states (guild_id integer, moderator integer, quotes integer, giveaway integer, automod integer, modlogs integer, community integer, fun integer, music integer, autoresponder integer, events integer, currency integer, modmail integer, basics integer, commands integer, tags integer, qotd integer, twitch_interg integer, highlight integer);
-    CREATE TABLE IF NOT EXISTS timers (guild_id integer, flag text, expiry float, uid text, payload text);
-    CREATE TABLE IF NOT EXISTS role_auto_assign (guild_id integer, role_id integer);
-    CREATE TABLE IF NOT EXISTS roles (guild_id integer, editor integer, muted integer, moderator integer, manager integer, streamer integer);
-    CREATE TABLE IF NOT EXISTS guild_members (guild_id integer, user_id integer, streaming_msg_id integer, warns_since_last_mute integer);
-    CREATE TABLE IF NOT EXISTS reminders (guild_id integer, channel_id integer, message text, remind_time real, msg_link text, user_id integer, uuid text);
-    CREATE TABLE IF NOT EXISTS afks (guild_id integer, user_id integer, reason text);
-    CREATE TABLE IF NOT EXISTS counters (guild_id integer, count_to real, expiry_message text);
-    CREATE TABLE IF NOT EXISTS role_persists (guild_id integer, role_id integer);
-    CREATE TABLE IF NOT EXISTS reaction_roles (guild_id integer, role_id integer, emoji_id text, message_id integer, channel_id integer, mode integer);
-    CREATE TABLE IF NOT EXISTS highlights (guild_id integer, user_id integer, word text);
-    CREATE TABLE IF NOT EXISTS hl_blocks (guild_id integer, user_id integer, rcid integer, rc integer);
-    CREATE TABLE IF NOT EXISTS bans (user_id, reason);
-    CREATE TABLE IF NOT EXISTS mutes (guild_id, user_id, reason text);--""",  # that last one is really just a lazyloader
-    "global": """CREATE TABLE IF NOT EXISTS PREMIUM_GUILD_KEYS (guild_id integer, key text, expiry text);
-        CREATE TABLE IF NOT EXISTS USERS (user_id integer, total_messages integer, warns text, quote text);
-        CREATE TABLE IF NOT EXISTS IDEAS (user_id integer, type text, msg text, msgid integer);
-        CREATE TABLE IF NOT EXISTS IDEAS_banned (user_id);--""",
-    "qotd": "CREATE TABLE IF NOT EXISTS qotd (guild_id integer, channel_id integer);"
+    # removed for anti-others-running-my-bot reason
 }
 
 class Database:
