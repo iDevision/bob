@@ -553,44 +553,40 @@ async def async_ping(ctx, delay):
     return await ctx.send(file=file)
 
 def plot_ping(bot, delay):
-    fig = plt.Figure()
-    ax = fig.subplots()
-    fig.set_tight_layout(None)
-    try:
-        pings = []
-        dts = []
-        a = 0
-        for dt, latency in bot.pings:
-            try:
-                pings.append(int(round(latency)))
-                a += latency
-                dts.append(f"{dt.hour if dt.hour > 9 else f'0{dt.hour}'}-{dt.minute}")
-            except: pass
 
-        def hilo(numbers, indexm: int = 1):
-            highest = [index * indexm for index, val in enumerate(numbers) if val == max(numbers)]
-            lowest = [index * indexm for index, val in enumerate(numbers) if val == min(numbers)]
-            return highest, lowest
-        highest, lowest = hilo(pings)
-        a = round(a/len(pings), 1)
-        ax.plot(dts, pings, markersize=0.0, linewidth=0.5, c="purple", alpha=1)
-        ax.plot(dts, pings, markevery=lowest, c='lime',
-                     linewidth=0.0,
-                     marker='o',
-                     markersize=3)
-        ax.plot(dts, pings, markevery=highest, c='red',
-                     linewidth=0.0,
-                     marker='o',
-                     markersize=3)
-        ax.fill_between(range(0, len(pings)), [0 for _ in pings], pings, facecolor="purple", alpha=0.2)
-        ax.text(1, 1, f"Current gateway ping: {round(bot.latency*1000, 1)} ms\nAverage Ping: {a} ms\nMessage ping: {round(delay)}ms")
-        ax.set(ylabel="Ping (MS)", xlabel="the last hour (UTC)")
-        fig.autofmt_xdate()
-        ret = io.BytesIO()
-        fig.savefig(ret)
-        ret.seek(0)
-    except Exception as e:
-        if isinstance(e, ZeroDivisionError):
-            raise commands.CommandError("Couldnt plot graph")
-        raise
-    return discord.File(ret, filename="ping.png")
+    if not bot_pings:
+        raise commands.CommandError("No pings available.")
+
+    plt.clf()
+
+    pings = []
+    times = []
+    total_ping = 0
+    for time, latency in bot.pings:
+        pings.append(round(latency, 0))
+        times.append(f"{time.hour if time.hour > 9 else f'0{time.hour}'}-{time.minute}")
+        total_ping += latency
+
+    def hilo(numbers, indexm: int = 1):
+        highest = [index * indexm for index, val in enumerate(numbers) if val == max(numbers)]
+        lowest = [index * indexm for index, val in enumerate(numbers) if val == min(numbers)]
+        return highest, lowest
+
+    highest_ping, lowest_ping = hilo(pings)
+
+    average_ping = round(total_ping / len(pings), 1)
+    plt.plot(times, pings, markersize=0.0, linewidth=0.5, c="purple", alpha=1)
+    plt.plot(times, pings, markevery=lowest_ping, c='lime', linewidth=0.0, marker='o', markersize=3)
+    plt.plot(times, pings, markevery=highest_ping, c='red', linewidth=0.0, marker='o', markersize=3)
+    plt.fill_between(range(0, len(pings)), [0 for _ in pings], pings, facecolor="purple", alpha=0.2)
+    plt.text(1, 1, f"Current gateway ping: {round(bot.latency * 1000, 1)} ms\nAverage Ping: {average_ping} ms\nMessage ping: {round(delay)}ms")
+    plt.ylabel("Ping (MS)")
+    plt.xlabel("The last hour (UTC)")
+    plt.xticks(rotation=-90)
+    plt.tight_layout()
+
+    image = io.BytesIO()
+    plt.savefig(image)
+    image.seek(0)
+
+    return discord.File(image, filename="ping.png")
