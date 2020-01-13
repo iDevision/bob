@@ -11,6 +11,7 @@ libraries/
 randomstuff.py
 data/
 Cogs/test.py
+utils/db.py
 
 # Distribution / packaging
 .Python
