@@ -1,7 +1,10 @@
+# kudos to lambda for helping me with this
+
 from utils import commands, btime
 import typing
 import datetime
 import asyncio
+import re
 
 def setup(bot):
     bot.add_cog(_highlight(bot))
@@ -10,6 +13,8 @@ class _highlight(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.db
+        self.cache = bot.highlight_cache
+        self.bot.loop.create_task(self.build_full_cache())
 
     def format_message(self, cont: str):
         v = commands.utils.escape_markdown(cont)
@@ -44,29 +49,64 @@ class _highlight(commands.Cog):
         except:
             pass
 
+    def build_re(self, highlights):
+        return re.compile((
+                              r'(?i)'  # case insensitive
+                              r'\b'  # word bound
+                              r'(?:{})'  # non capturing group, to make sure that the word bound occurs before/after all words
+                              r'\b'
+                          ).format('|'.join(map(re.escape, highlights))))
+
+    async def build_full_cache(self):
+        await self.bot.wait_until_ready()
+        for i in self.bot.guilds:
+            self.cache[i.id] = await self.build_guild_cache(i)
+
+    async def build_guild_cache(self, guild: commands.Guild):
+        hl = await self.db.fetchall("SELECT user_id, word FROM highlights WHERE guild_id IS ?", guild.id)
+        blocks = await self.db.fetchall("SELECT user_id, rcid, rc FROM hl_blocks WHERE guild_id IS ?", guild.id)
+        din = {}
+        dout = {}
+        for uid, word in hl:
+            if uid in din:
+                din[uid]['words'].append(word)
+            else:
+                din[uid] = {"words": [word], "blocks": []}
+        for uid, cmid, mc in blocks:
+            if uid in din:
+                din[uid]['blocks'].append((cmid, mc))
+            else:
+                din[uid] = {"words": [], "blocks": [(cmid, mc)]}
+        for uid, v in din.items():
+            dout[uid] = (self.build_re(v['words']), v['blocks'])
+        return dout
+
+    async def rebuild_single_cache(self, member:commands.Member):
+        guild = member.guild
+        hl = await self.db.fetchall("SELECT word FROM highlights WHERE guild_id IS ? AND user_id IS ?", guild.id, member.id)
+        blocks = await self.db.fetchall("SELECT rcid, rc FROM hl_blocks WHERE guild_id IS ? AND user_id IS ?", guild.id, member.id)
+        b = []
+        for i in blocks:
+            b.append((i[0], i[1]))
+        h = []
+        for i in hl:
+            h.append(i[0])
+        if not h:
+            if member.id in self.cache[guild.id]:
+                del self.cache[guild.id][member.id]
+            return
+        self.cache[guild.id][member.id] = (self.build_re(h), b)
+
     @commands.Cog.listener()
     async def on_message(self, msg: commands.Message):
-        if not msg.guild or msg.author.bot: return
-        hl = await self.db.fetchall("SELECT user_id, word FROM highlights WHERE guild_id IS ?", msg.guild.id)
-        blocks = await self.db.fetchall("SELECT user_id, rcid, rc FROM hl_blocks WHERE guild_id IS ?", msg.guild.id)
+        if not msg.guild or msg.author.bot or msg.guild.id not in self.cache: return
         highlighted = []
-        for uid, word in hl:
-            if uid in highlighted:
-                return
-            for i in blocks:
-                if i['user_id'] == uid:
-                    if i['rc'] and i['rcid'] == msg.author: # person
-                        highlighted.append(uid) # fake it to save iterations
-                        break
-                    elif i['rcid'] == msg.channel.id:
-                        highlighted.append(uid)
-                        break
-            if uid in highlighted:
+        for mid, m in self.cache[msg.guild.id].items():
+            if (msg.author, 0) in m[1] or (msg.channel.id, 1) in m[1]:
                 continue
-
-            if word in msg.content:
-                self.bot.loop.create_task(self.do_highlight(msg, self.bot.get_user(uid), word))
-                highlighted.append(uid)
+            v = m[0].search(msg.content)
+            if v:
+                self.bot.loop.create_task(self.do_highlight(msg, msg.guild.get_member(mid), v.group()))
 
     @commands.group(invoke_without_command=True, aliases=["hl"])
     @commands.guild_only()
@@ -89,6 +129,7 @@ class _highlight(commands.Cog):
         add a word to trigger highlights
         """
         await self.db.execute("INSERT INTO highlights VALUES (?,?,?)", ctx.guild.id, ctx.author.id, word)
+        await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"added `{word}` to your highlight triggers")
 
     @highlight.command()
@@ -99,6 +140,7 @@ class _highlight(commands.Cog):
         remove a word from your highlights
         """
         await self.db.execute("DELETE FROM highlights WHERE guild_id IS ? AND user_id IS ? AND word IS ?", ctx.guild.id, ctx.author.id, word)
+        await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"Updated your highlight triggers")
 
     @highlight.command()
@@ -109,6 +151,7 @@ class _highlight(commands.Cog):
         block a user or a channel from triggering highlights for you
         """
         await self.db.execute("INSERT INTO hl_blocks (?,?,?,?)", ctx.guild.id, ctx.author.id, channel_or_person.id, 0 if isinstance(channel_or_person, commands.User) else 1)
+        await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"added {channel_or_person} to your block list")
 
     @highlight.command()
@@ -119,6 +162,7 @@ class _highlight(commands.Cog):
         unblocks a user or channel from your highlights, allowing the pings to flow free once again
         """
         await self.db.execute("DELETE FROM hl_blocks WHERE guild_id IS ? AND user_id IS ? AND rcid IS ?", ctx.guild.id, ctx.author.id, channel_or_person.id)
+        await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"updated your block list")
 
     @highlight.command()
