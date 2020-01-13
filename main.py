@@ -1,3 +1,20 @@
+"""
+Bob, a discord bot
+Copyright (C) 2019  IAmTomahawkx
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 import asyncio
 import calendar
 import collections
@@ -20,12 +37,7 @@ from utils.context import Contexter
 
 colorama.init(autoreset=True)
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "LibCustoms"))
-
-
-ids = {"BOB_ALPHA": 596223121527406603, "BOB": 587482154938794028, "BOB_PREMIUM": 604070543754264576, "TILTEDGAMING": 555747290950664204}
-
-did_setup = False
+ids = {"BOB_ALPHA": 596223121527406603, "BOB": 587482154938794028}
 
 if False:
     all_logger = logging.getLogger("discord")
@@ -109,6 +121,7 @@ class Bot(commands.Bot):
         if self.run_bot == "BOB_PREMIUM":
             self.premium_auth_keys = {}
         self._custom_listeners = []
+        self.highlight_cache = {}
         self.custom_flags = ["mute"]
         self._custom_timers = []
         self.custom_event_loop.start()
@@ -126,8 +139,31 @@ class Bot(commands.Bot):
         self.states = {}
         self.logging_ignore = []
         self.pings = collections.deque(maxlen=60)
-
         self.most_recent_change = self.changelog = None
+        self.auths = {}
+
+        self.twitch_cache = {}
+
+    def get_from_parent(self, parentid):
+        return self.twitch_cache.get(parentid, None)
+
+    def get_from_guildid(self, guildid):
+        for a, b in self.twitch_cache.items():
+            if b['guild_id'] == guildid:
+                return a, b
+        return None, None
+
+    def get_from_userid(self, userid):
+        for a, b in self.twitch_cache.items():
+            if b['discord_id'] == userid:
+                return a, b
+        return None, None
+
+    def get_from_twitchid(self, twitchid):
+        for a, b in self.twitch_cache.items():
+            if b['twitch_id'] == twitchid:
+                return a,b
+        return None, None
 
     async def get_context(self, message, *, cls=None):
         return await super().get_context(message, cls=cls or Contexter)
@@ -148,7 +184,8 @@ class Bot(commands.Bot):
             except Exception as e:
                 print(f"failed to delete message: {e.__class__.__name__} - {e.args[0]}")
         await bot.db.execute("UPDATE guild_members SET streaming_msg_id=0")  # yes, we want to remove all of them
-        await self.on_pre_disconnect()
+        lchan = self.get_channel(629167007807438858)
+        await lchan.send(embed=commands.Embed(title="Disconnecting", color=commands.Color.dark_red()))
 
     def create_task_and_count(self, coro):
         self.counter += 1
@@ -208,10 +245,6 @@ class Bot(commands.Bot):
         # add it to a list so i dont have to make database calls every second in the custom event loop.
         self._custom_timers.append((gid, flag, expiry, uid, json.dumps(payload, ensure_ascii=False)))
 
-    async def on_pre_disconnect(self):
-        lchan = self.get_channel(629167007807438858)
-        await lchan.send(embed=commands.Embed(title="Disconnecting", color=commands.Color.dark_red()))
-
     def get_category(self, name):
         return self.categories.get(name)
 
@@ -231,18 +264,28 @@ class Bot(commands.Bot):
             raise ValueError(f"the category {name} does not exist")
         return self.categories.pop(name)
 
+    async def on_message(self, message):
+        if message.author.bot or not bot.is_ready() or not bot.setup:
+            return
+        await self.process_commands(message)
+        if message.guild is not None:
+            self.dispatch("points_payout", message)
+        if message.guild is not None and message.guild.id in self.custom_guilds:
+            await self.custom_guilds[message.guild.id].get_message(message, message.author, message.guild)
+
+    async def on_error(event, *args, **kwargs):
+        if isinstance(sys.exc_info()[0], commands.CommandError):
+            return  # handled by on_command_error
+        traceback.print_exc()
+        try:
+            e = discord.Embed(name="Error occurred")
+            e.description = traceback.format_stack(sys.exc_info()[2])
+            e.colour = discord.Color.red()
+            await bot.get_channel(bot.uhoh).send(f"<@547861735391100931>", embed=e)
+        except Exception:
+            pass
 
 bot = Bot(get_pre, help_command=None, owner_ids=all_powerful_users, case_insensitive=True)
-
-@bot.event
-async def on_message(message):
-    if message.author.bot or not bot.is_ready() or not bot.setup:
-        return
-    await bot.process_commands(message)
-    if message.guild is not None:
-        bot.dispatch("points_payout", message)
-    if message.guild is not None and message.guild.id in bot.custom_guilds:
-        await bot.custom_guilds[message.guild.id].get_message(message, message.author, message.guild)
 
 @bot.check
 async def check_bans(ctx):
@@ -250,20 +293,7 @@ async def check_bans(ctx):
         raise errors.BannedUser(ctx.author)
     return True
 
-@bot.event
-async def on_error(event, *args, **kwargs):
-    if isinstance(sys.exc_info()[0], commands.CommandError) and not isinstance(sys.exc_info()[0], commands.CommandInvokeError):
-        return  # handled by on_command_error
-    traceback.print_exc()
-    try:
-        e = discord.Embed(name="Error occurred")
-        e.description = traceback.format_stack(sys.exc_info()[2])
-        e.colour = discord.Color.red()
-        await bot.get_channel(bot.uhoh).send(f"<@547861735391100931>: sum ting wong", embed=e)
-    except Exception:
-        pass
-
-    bot.load_extension("jishaku")
+bot.load_extension("jishaku")
 bot.load_extension("Cogs.changelog")
 bot.load_extension("Cogs.rtfm")
 bot.load_extension("Cogs.automod")
@@ -287,7 +317,8 @@ bot.load_extension("Cogs.events")
 bot.load_extension("Cogs.reactionroles")
 bot.load_extension("Cogs.dbl")
 bot.load_extension("Cogs.help")
-bot.load_extension("Cogs.socket")
+#bot.load_extension("Cogs.socket")
+#bot.load_extension("Cogs.twitch")
 
 if __name__ == "__main__":
     print("starting...")
