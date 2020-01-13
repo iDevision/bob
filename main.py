@@ -262,8 +262,8 @@ async def on_error(event, *args, **kwargs):
         await bot.get_channel(bot.uhoh).send(f"<@547861735391100931>: sum ting wong", embed=e)
     except Exception:
         pass
-discord.Client.http
-bot.load_extension("jishaku")
+
+    bot.load_extension("jishaku")
 bot.load_extension("Cogs.changelog")
 bot.load_extension("Cogs.rtfm")
 bot.load_extension("Cogs.automod")
