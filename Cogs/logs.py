@@ -20,7 +20,7 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         return self.bot.guild_module_states[guild.id]['modlogs']
 
     def has_permission(self, guild):
-        return guild.me.guild_permissions.view_audit_logs
+        return guild.me.guild_permissions.view_audit_log
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild, *args):
