@@ -16,12 +16,11 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         self.bot = bot
         self.db = bot.get_cog("_modlogs").db
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        pass
-
     def is_enabled(self, guild):
         return self.bot.guild_module_states[guild.id]['modlogs']
+
+    def has_permission(self, guild):
+        return guild.me.guild_permissions.view_audit_logs
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild, *args):
@@ -78,6 +77,9 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
     async def on_member_remove(self, member):
         ml, mk, mb = await self.db.fetchrow("SELECT member_leave, member_iskicked, member_isbanned FROM modlogs WHERE guild_id IS ?",
                                         (member.guild.id,))
+        if not self.has_permission(member.guild):
+            return await self.log("**User Left**", f"{member}\n(unable to resolve leave/ban/kick. I can't see the audit logs!)", [], member.guild,
+                           color=discord.Color.red(), footer=(f"id: {member.id}", discord.Embed.Empty))
         klogs = await self.get_audit_logs(member.guild, limit=1, action=discord.AuditLogAction.kick)
         blogs = await self.get_audit_logs(member.guild, limit=1, action=discord.AuditLogAction.ban)
         try:
@@ -85,7 +87,7 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         except:
             try:
                 if time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(blogs[0].created_at.timetuple()) > 3 and ml:
-                    await self.log("**User Left**", f"{member.mention} - {member}", [], member.guild,
+                    await self.log("**User Left**", f"{member}", [], member.guild,
                                    color=discord.Color.red(), footer=(f"id: {member.id}", discord.Embed.Empty))
                 else:
                     return # its a ban. will be handled by on_member_ban
@@ -102,7 +104,7 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
                 if not mk:
                     return
                 return await self.on_member_kicketh(member, klogs.user) # user has been yeeted
-        if klogs and time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(klogs[0].created_at.timetuple()) > 3 and \
+        if klogs and time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(klogs.created_at.timetuple()) > 3 and \
                 time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(blogs.created_at.timetuple()) > 3:
             # last kick and ban was more than 3 seconds ago, its probably not this event, so the user must have left voluntarily
             if not ml:
@@ -156,6 +158,10 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         enabled = await self.db.fetch("SELECT message_delete FROM modlogs WHERE guild_id IS ?", message.guild.id)
         if not enabled:
             return
+        if not self.has_permission(message.guild):
+            return await self.log("**Message Deleted**", "(unable to determine who deleted the message, I can't see the audit logs!)",
+                           [("content", message.content)], message.guild,
+                           author=(str(message.author), message.author.avatar_url), color=discord.Color.magenta())
         logs = await self.get_audit_logs(message.guild, limit=1, action=discord.AuditLogAction.message_delete)
         sets = [(str(message.author) + " - "+str(message.author.id), message.content)]
         try:
@@ -252,9 +258,14 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         await self.log("**emojis updated**", "*(i dont know what else to put here? send suggestions with !idea)*", [], guild)
 
     @commands.Cog.listener()
-    async def on_member_ban(self, guild, user):
+    async def on_member_ban(self, guild, member):
+        if not self.has_permission(guild):
+            return await self.log("**User Banned**", "(Unable to resolve the moderator responsible, I can't see the audit logs!)",
+                       [
+                        ("User", member.mention + f"\nname: {str(member)}\nid: {member.id}")], member.guild,
+                       color=discord.Color.red())
         log = await self.get_audit_logs(guild, limit=1, action=discord.AuditLogAction.ban)
-        await self.on_member_banish(user, log[0].user)
+        await self.on_member_banish(member, log[0].user)
 
 
     @commands.Cog.listener()
@@ -262,6 +273,9 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         enabled = await self.db.fetch("SELECT member_isunbanned FROM modlogs WHERE guild_id IS ?", guild.id)
         if not enabled:
             return
+        if not self.has_permission(guild):
+            return await self.log("Member Unbanned", "(Unable to resolve the moderator responsible, I can't see the audit logs!)",
+                                  [("**name**", user.mention + " " + user.name+user.discriminator)],guild, color=discord.Color.green())
         logs = (await self.get_audit_logs(guild, limit=1, action=discord.AuditLogAction.unban))[0]
         await self.log("Member Unbanned", discord.Embed.Empty, [("**name**", user.mention + " " + user.name+user.discriminator),
                                                ("Moderator", logs.user.mention + " " + logs.user.name+logs.user.discriminator)],
@@ -270,7 +284,6 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
     async def on_member_mute(self, guild, user, length, mod="Unknown Moderator", reason="Unknown Reason"):
         await self.log("Member muted", discord.Embed.Empty, [("User", user.mention + " | "+str(user)), ("Reason", reason), ("Length", length)], guild,
         footer=("User Id: "+str(user.id), discord.Embed.Empty), author=("Mute | "+str(mod), discord.Embed.Empty), color=discord.Color.red())
-
 
     async def on_member_unmute(self, guild, user, mod="Unknown Moderator", reason="Unknown Reason"):
         await self.log("Member unmuted", discord.Embed.Empty, [("Reason", reason), ("User", user.mention+" | "+str(user))], guild,

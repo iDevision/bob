@@ -198,8 +198,8 @@ class misc(commands.Cog):
         e = commands.Embed(color=commands.Color.teal())
         e.set_image(url=(target.avatar_url_as(format="png") if not target.is_avatar_animated() else target.avatar_url_as(format="gif")))
         await ctx.send(embed=e)
-    
-    @commands.command(aliases=["lc"])
+
+    @commands.command(aliases=["lc", "source"])
     @check_module('basics')
     @cooler()
     async def linecount(self, ctx):
@@ -208,7 +208,7 @@ class misc(commands.Cog):
         """
         if not self._lc:
             await self.lc()
-        await ctx.send(f"BOB is compiled of {self._lc} lines spead over {self._fc} files!")
+        await ctx.send(embed=ctx.embed_invis(description=f"BOB is compiled of {self._lc} lines spead over {self._fc} files! you can view the source [here!](https://github.com/IAmTomahawkx/bob/tree/master)"))
 
     async def lc(self):
         amo = 0
@@ -419,7 +419,7 @@ class misc(commands.Cog):
         await v.edit(content="removed bot editor role\ncleanup complete\nleaving")
         await ctx.guild.leave()
 
-    @commands.command()
+    @commands.command(aliases=['about', 'botinfo'])
     @cooler()
     async def info(self, ctx):
         """
@@ -428,14 +428,13 @@ class misc(commands.Cog):
         if not self._lc:
             await self.lc()
         e = discord.Embed(color=discord.Color.teal())
-        e.set_footer(text=f"Shard {ctx.guild.shard_id or 1} | {runtimeinfo.RUN_SERVER} | system start {time.ctime(self.bot.STARTED_TIME)}")
+        e.set_footer(text=f"Shard {ctx.guild.shard_id or 0} | {self.bot.settings['server']} | system start {time.ctime(self.bot.STARTED_TIME)}")
         e.timestamp = datetime.datetime.utcnow()
-        rep = f"running {runtimeinfo.RUN_DISPLAY_NAME} , version {self.bot.version} on server {runtimeinfo.RUN_SERVER}"
+        rep = f"running {self.bot.settings['run_display_name']} | version {self.bot.version} on server {self.bot.settings['server']}"
         e.add_field(name="bot info", value=rep)
         e.add_field(name="line count", value=f"BOB is compiled of {self._lc} lines spead over {self._fc} files!")
         e.add_field(name="Author", value="IAmTomahawkx#1000")
-        e.add_field(name="need help?", value="[the discord!](https://discord.gg/VKp6zrs)\nalso, there's the help command")
-        e.add_field(name="version", value=self.bot.version)
+        e.add_field(name="need help?", value="[super active support server!](https://discord.gg/VKp6zrs)\nalso, there's the help command")
         await ctx.send(embed=e)
 
     @commands.command()
@@ -553,40 +552,46 @@ async def async_ping(ctx, delay):
     return await ctx.send(file=file)
 
 def plot_ping(bot, delay):
-
-    if not bot_pings:
+    if not bot.pings:
         raise commands.CommandError("No pings available.")
 
-    plt.clf()
+    fig = plt.Figure()
+    ax = fig.subplots()
 
     pings = []
     times = []
     total_ping = 0
     for time, latency in bot.pings:
+        if latency == float("nan"):
+            continue
         pings.append(round(latency, 0))
         times.append(f"{time.hour if time.hour > 9 else f'0{time.hour}'}-{time.minute}")
         total_ping += latency
 
-    def hilo(numbers, indexm: int = 1):
-        highest = [index * indexm for index, val in enumerate(numbers) if val == max(numbers)]
-        lowest = [index * indexm for index, val in enumerate(numbers) if val == min(numbers)]
+    def hilo(numbers):
+        highest = [index for index, val in enumerate(numbers) if val == max(numbers)]
+        lowest = [index for index, val in enumerate(numbers) if val == min(numbers)]
         return highest, lowest
 
     highest_ping, lowest_ping = hilo(pings)
 
-    average_ping = round(total_ping / len(pings), 1)
-    plt.plot(times, pings, markersize=0.0, linewidth=0.5, c="purple", alpha=1)
-    plt.plot(times, pings, markevery=lowest_ping, c='lime', linewidth=0.0, marker='o', markersize=3)
-    plt.plot(times, pings, markevery=highest_ping, c='red', linewidth=0.0, marker='o', markersize=3)
-    plt.fill_between(range(0, len(pings)), [0 for _ in pings], pings, facecolor="purple", alpha=0.2)
-    plt.text(1, 1, f"Current gateway ping: {round(bot.latency * 1000, 1)} ms\nAverage Ping: {average_ping} ms\nMessage ping: {round(delay)}ms")
-    plt.ylabel("Ping (MS)")
-    plt.xlabel("The last hour (UTC)")
-    plt.xticks(rotation=-90)
-    plt.tight_layout()
+    average_ping = round(sum([ping if str(ping) != "nan" else 0 for _, ping in bot.pings ]) / len(bot.pings), 1)
+    ax.plot(times, pings, markersize=0.0, linewidth=0.5, c="purple", alpha=1)
+    ax.plot(times, pings, markevery=lowest_ping, c='lime', linewidth=0.0, marker='o', markersize=4)
+    ax.plot(times, pings, markevery=highest_ping, c='red', linewidth=0.0, marker='o', markersize=4)
+    ax.fill_between(range(0, len(pings)), [0 for _ in pings], pings, facecolor="purple", alpha=0.2)
+    ax.text(1, 1, f"Current gateway ping: {round(bot.latency * 1000, 1)} ms\nAverage Ping: {average_ping} ms\nMessage ping: {round(delay)}ms")
+    ax.set(ylabel="Ping (MS)", xlabel="the last hour (UTC)")
+
+    ax.tick_params(
+        axis='x',
+        which='major',
+        bottom=False,
+        top=False,
+        labelbottom=False)
 
     image = io.BytesIO()
-    plt.savefig(image)
+    fig.savefig(image)
     image.seek(0)
 
     return discord.File(image, filename="ping.png")
