@@ -75,6 +75,8 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         if not self.bot.is_ready():
             return
         rems = await self.remindersdb.fetchall("SELECT * FROM reminders")
+        if not rems:
+            return
         dels = []
         for gid, cid, msg, remindtime, link, uid, uuid in rems:
             if remindtime <= calendar.timegm(datetime.datetime.utcnow().timetuple()):
@@ -95,6 +97,11 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
     @commands.group("system", invoke_without_command=True, usage="[subcommand]", aliases=['sys', 'dev'])
     async def system(self, ctx):
         pass
+
+    @system.command()
+    async def reloadconfig(self, ctx):
+        self.bot.reload_settings()
+        await ctx.message.add_reaction("\U0001f44d")
 
     @system.command()
     async def ban(self, ctx, user: typing.Union[discord.User, int], *, reason="None Given"):
@@ -177,6 +184,7 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         else:
             try:
                 self.bot.load_extension(module)
+                await ctx.send(f"loaded {module}")
             except Exception as e:
                 await ctx.send("failed to load module")
                 traceback.print_exception(type(e), e, e.__traceback__)
@@ -213,7 +221,6 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
 
 ### ==========================
 
-
 async def on_command_error(ctx: commands.Context, error):
     if isinstance(error, (errors.CommandInterrupt, errors.ModuleDisabled)):
         return await ctx.send(error.message, delete_after=5)
@@ -243,22 +250,26 @@ async def on_command_error(ctx: commands.Context, error):
     elif isinstance(error, commands.CommandError) and not isinstance(error, commands.CommandInvokeError):
         await ctx.send(error.args[0])
     else:
-        v = f"error: message: id: {ctx.message.id} content: {ctx.message.content}\tguild: id:{ctx.guild.id}" \
-                f" name:{ctx.guild.name}\t error: class:{error.__class__.__name__}  args:{error.args}"
-        traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
+        v = f"error:\n__message__:\n> id: {ctx.message.id}\n> content: {ctx.message.content}\n__guild__:\n> id: {ctx.guild.id}" \
+                f"\n> name: {ctx.guild.name}\n__Author__:\n> name: {ctx.author}\n> id: {ctx.author.id}\n __error__:\n> class: {error.original.__class__.__name__}\n> args: {error.original.args}"
+        traceback.print_exception(type(error.original), error.original, error.original.__traceback__, file=sys.stderr)
         e = discord.Embed(description=v +
                                         "\n\n```" +
                                         "\n".join(traceback.format_exception(
-                                            type(error), error, error.__traceback__)).replace("Angelo", "TMHK")+"\n```",
+                                            type(error.original), error.original, error.original.__traceback__)).replace("Angelo", "TMHK")+"\n```",
                           timestamp=datetime.datetime.utcnow())
+
+        from libraries import keys
+        c = getattr(keys, ctx.bot.settings['run_bot']+"_UHOH", 604803860611203072)
         try:
-            from libraries import keys
-            c = getattr(keys, ctx.bot.settings['run_bot']+"_UHOH", 604803860611203072)
             await ctx.bot.get_channel(c).send(embed=e)
         except Exception as e:
-            await ctx.send("couldn't post your error!")
-            await ctx.send(f"\U000026a0 error!\n`{error.args[0]}`")
-
+            await ctx.send("couldn't alert the dev of your error due to: "+e.args[0])
+        else:
+            if not await ctx.bot.is_owner(ctx.author):
+                await ctx.send("An error has occurred while running this command. The dev has been informed, and will fix it soon!")
+            else:
+                await ctx.send(embed=e)
 
 # ===========================================
 
@@ -276,8 +287,8 @@ class MyCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def save_ws_latency(self):
-        if self.bot.latency == float('NaN'):
-            self.bot.pings.append(100) #bs but whatever
+        if str(self.bot.latency) == "nan":
+            self.bot.pings.append((datetime.datetime.utcnow(), 50)) #bs but whatever
         self.bot.pings.append((datetime.datetime.utcnow(), self.bot.latency * 1000))
 
     @tasks.loop(seconds=1)
@@ -320,12 +331,12 @@ class MyCog(commands.Cog):
 
         # next, cache the module states from existing data.
         states = await self.bot.db.fetchall("SELECT * FROM module_states")
-        for gid, mod, quotes, giveaway, automod, modlogs, community, fun, music, autoresponder, events, currency, modmail, basics, commands, tags, qotd, twitch_intergration, highlight in states:
+        for gid, mod, quotes, giveaway, automod, modlogs, community, fun, music, autoresponder, events, currency, modmail, basics, commands, tags, _, twitch_intergration, highlight in states:
             self.bot.guild_module_states[gid] = {"moderation": bool(mod), "quotes": bool(quotes), "automod": bool(automod), "modlogs": bool(modlogs),
                                             "community": bool(community), "fun": bool(fun), "music": bool(music), "autoresponder": bool(autoresponder),
                                             "events": bool(events), "currency": bool(currency), "giveaway": bool(giveaway), "misc": int(basics),
                                             "modmail": bool(modmail), "basics": bool(basics), "commands": bool(commands),
-                                            "tags": bool(tags), "qotd": bool(qotd), "twitch": bool(twitch_intergration), "highlight": highlight}
+                                            "tags": bool(tags), "twitch": bool(twitch_intergration), "highlight": highlight}
         for vals in await self.bot.db.fetchall("SELECT * FROM timers"):
             self.bot._custom_timers.append(vals)
         # next, build the tables for the guilds joined during downtime (if any).
@@ -339,10 +350,10 @@ class MyCog(commands.Cog):
                 self.bot.guild_module_states[guild.id] = {"moderation": False, "quotes": False, "automod": False,
                                                           "modlogs": False,
                                                           "community": False, "fun": False, "music": False,
-                                                          "autoresponder": False,
+                                                          "autoresponder": False, "misc": False,
                                                           "events": False, "currency": False, "giveaway": False,
                                                      "modmail": False, "basics": False, "commands": False, "tags": False,
-                                                     "qotd": False, "twitch": False, "highlight": False}
+                                                     "twitch": False, "highlight": False}
                 await self.bot.db.execute("INSERT INTO module_states VALUES (?,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)",
                                           guild.id)
             if guild.id not in self.bot.guild_role_states:
@@ -394,15 +405,23 @@ class MyCog(commands.Cog):
         self.bot.guild_module_states[guild.id] = {"moderation": True, "quotes": True, "automod": True,
                                                           "modlogs": True,
                                                           "community": True, "fun": True, "music": True,
-                                                          "autoresponder": True,
-                                                          "events": True, "currency": False, "giveaway": False,
-                                                     "modmail": False, "basics": True, "commands": True, "tags": True}
+                                                          "autoresponder": True, "misc": True,
+                                                          "events": True, "currency": True, "giveaway": True,
+                                                     "modmail": True, "basics": True, "commands": True, "tags": True,
+                                                     "twitch": True, "highlight": True}
+        fmt = f"**__Guild Joined__**\nname: {guild.name}\nid: {guild.id}\nowner: {guild.owner}\n\nMembers: {len(guild.members)}"
+        e = commands.Embed(description=fmt, color=discord.Color.teal())
+        await self.bot.get_channel(662176688150675476).send(embed=e)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         del self.bot.guild_prefixes[guild.id]
-        print(f"left guild. ID: {guild.id} | Name: {guild.name}")
-
+        del self.bot.guild_module_states[guild.id]
+        await self.bot.db.execute("DELETE FROM roles WHERE guild_id IS ?", guild.id)
+        await self.bot.db.execute("DELETE FROM module_states WHERE guild_id IS ?", guild.id)
+        fmt = f"**__Guild Left__**\nname: {guild.name}\nid: {guild.id}\nowner: {guild.owner}\n\nMembers: {len(guild.members)}"
+        e = commands.Embed(description=fmt, color=commands.Color.red())
+        await self.bot.get_channel(662176688150675476).send(embed=e)
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
