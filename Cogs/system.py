@@ -255,7 +255,7 @@ async def on_command_error(ctx: commands.Context, error):
         traceback.print_exception(type(error.original), error.original, error.original.__traceback__, file=sys.stderr)
         e = discord.Embed(description=v +
                                         "\n\n```" +
-                                        "\n".join(traceback.format_exception(
+                                        "".join(traceback.format_exception(
                                             type(error.original), error.original, error.original.__traceback__)).replace("Angelo", "TMHK")+"\n```",
                           timestamp=datetime.datetime.utcnow())
 
