@@ -179,7 +179,6 @@ class PaginatedHelpCommand(commands.HelpCommand):
     async def send_bot_help(self, mapping):
         ctx = self.context
         e = discord.Embed(color=discord.Color.teal())
-        e.set_author(name=str(ctx.author), icon_url=ctx.author.avatar_url)
         e.set_footer(text="Made by IAmTomahawkx#1000")
         e.add_field(name="Help Categories", value=self.default_help_categories)
         v = "[support server](https://discord.gg/wcVHh4h) | [invite!]" \
@@ -236,13 +235,3 @@ class PaginatedHelpCommand(commands.HelpCommand):
         pages = HelpPaginator(self, self.context, entries)
         self.common_command_formatting(pages, group)
         await pages.paginate()
-
-"""
-def _build_re(self, highlights):
-		return re.compile((
-			r'(?i)'  # case insensitive
-			r'\b'  # word bound
-			r'(?:{})'  # non capturing group, to make sure that the word bound occurs before/after all words
-			r'\b'
-		).format('|'.join(map(re.escape, highlights))))
-"""
