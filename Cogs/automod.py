@@ -38,7 +38,10 @@ class automodCog(commands.Cog):
              "banned_words": [], "channel": channel}
             v = await self.db.fetchall("SELECT word FROM automod_banned_words WHERE guild_id IS ?", i.id)
             if v:
-                self.bot.states[gid]['banned_words'] = [a[0] for a in v]
+                try:
+                    self.bot.states[gid]['banned_words'] = [a[0] for a in v]
+                except:
+                    pass
 
     @commands.group(invoke_without_command=True, usage="[subcommands]")
     async def automod(self, ctx):
