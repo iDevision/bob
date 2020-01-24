@@ -57,7 +57,7 @@ class BT(commands.Cog):
         emb = commands.Embed(color=commands.Color.dark_green(), title=f"Issue #{errorid} - {data[2]} (Fixed)", description=data[3])
         emb.timestamp = datetime.datetime.utcnow()
         emb.set_footer(text="Issue released at")
-        await self.bot.http.delete_message(self.bt_webhook.channel.id, data[1], reason=f"Bug Fixed (#{errorid})")
+        await self.bot.http.delete_message(self.bt_webhook.channel_id, data[1], reason=f"Bug Fixed (#{errorid})")
         msg = await self.bt_webhook.send(embed=emb, wait=True)
         await self.bot.db.execute("UPDATE bt_bugs SET msgid=?, resolved=1;", msg.id)
 
@@ -96,7 +96,7 @@ class BT(commands.Cog):
                         description=data[3])
         emb.timestamp = datetime.datetime.utcnow()
         emb.set_footer(text="Issue released at")
-        await self.bot.http.delete_message(self.bt_webhook.channel.id, data[1], reason=f"Bug Fixed (#{errorid})")
+        await self.bot.http.delete_message(self.bt_webhook.channel_id, data[1], reason=f"Bug Fixed (#{errorid})")
         msg = await self.bob_webhook.send(embed=emb, wait=True)
         await self.bot.db.execute("UPDATE bt_bugs SET msgid=?, resolved=1;", msg.id)
         await ctx.message.add_reaction("\U0001f44d")
