@@ -93,7 +93,7 @@ class BT(commands.Cog):
                 pass
             return
         emb = commands.Embed(color=commands.Color.dark_green(), title=f"Bug #{errorid} - {data[2]} (Fixed)",
-                        description=data[3])
+                        description=data[2])
         emb.timestamp = datetime.datetime.utcnow()
         emb.set_footer(text="Issue released at")
         await (await self.bot.get_channel(666878516469563402).fetch_message(data[1])).delete()
