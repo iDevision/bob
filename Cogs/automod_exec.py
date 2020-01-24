@@ -22,7 +22,7 @@ class AModCog(commands.Cog):
     async def on_message(self, message):
         if not self.bot.setup or not self.states:
             return
-        if message.guild is None or not message.guild.me.guild_permissions.manage_messages and not message.guild.me.guild_permissions.administrator:
+        if not message.guild or not hasattr(message.author, "guild") or not (message.guild.me.guild_permissions.manage_messages and message.guild.me.guild_permissions.administrator):
             return
         if not self.bot.guild_module_states.get(message.guild.id, {"automod":False})['automod'] or self.ignored(message.author) or message.author.bot:
             return
