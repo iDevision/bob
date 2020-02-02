@@ -43,6 +43,7 @@ class Player(wavelink.Player):
 
         self.queue = asyncio.Queue()
         self.next_event = asyncio.Event()
+        self.controller_channel_id = None
 
         self.volume = 40
         self.dj = None
@@ -127,6 +128,8 @@ class Player(wavelink.Player):
         streaming = "\U0001f534 streaming"
         if not track:
             track = self.current
+        if self.updating:
+            return
 
         self.updating = True
         stuff = f'Now Playing:```ini\n{track.title}\n\n' \
@@ -142,19 +145,21 @@ class Player(wavelink.Player):
         embed.add_field(name='Current DJ', value=self.dj.mention)
 
         if len(self.entries) > 0:
-            data = '\n'.join(f'- `{t.title[0:45]}{"..." if len(t.title) > 45 else ""}`\n{"-"*10}'
+            data = '\n'.join(f'- {t.title[0:45]}{"..." if len(t.title) > 45 else ""}\n{"-"*10}'
                              for t in itertools.islice([e for e in self.entries if not e.is_dead], 0, 3, None))
             stuff += data
         embed.description = stuff + "```"
+        if self.controller_channel_id is None:
+            self.controller_channel_id = track.channel.id
         if not await self.is_current_fresh(track.channel) and self.controller_message:
             try:
                 await self.controller_message.delete()
             except discord.HTTPException:
                 pass
 
-            self.controller_message = await track.channel.send(embed=embed)
+            self.controller_message = await self.bot.get_channel(self.controller_channel_id).send(embed=embed)
         elif not self.controller_message:
-            self.controller_message = await track.channel.send(embed=embed)
+            self.controller_message = await self.bot.get_channel(self.controller_channel_id).send(embed=embed)
         else:
             self.updating = False
             return await self.controller_message.edit(embed=embed, content=None)
@@ -276,9 +281,9 @@ class music(commands.Cog):
         bot.loop.create_task(self.initiate_nodes())
 
     async def initiate_nodes(self):
-        nodes = {'MAIN': {'host': '192.168.1.80',
+        nodes = {'MAIN': {'host': '127.0.0.1',
                           'port': 8080,
-                          'rest_url': 'http://192.168.1.80:8080',
+                          'rest_url': 'http://127.0.0.1:8080',
                           'password': "BOBTHEBUILDER",
                           'identifier': self.bot.settings['music_node'],
                           'region': 'us_central'}}
@@ -319,6 +324,8 @@ class music(commands.Cog):
             player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
         except:
             return False
+        if player.dj is None:
+            player.dj = ctx.author
         if ctx.author.id == player.dj.id:
             return True
 
@@ -398,6 +405,7 @@ class music(commands.Cog):
                 return
 
         await player.connect(channel.id)
+        player.controller_channel_id = ctx.channel.id
 
     @commands.command(name='play', aliases=['sing'])
     @commands.cooldown(1, 2, commands.BucketType.user)
@@ -448,13 +456,7 @@ class music(commands.Cog):
         Show the Current Song
         """
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
-        if not player:
-            return
-
-        if not player.is_connected:
-            return
-
-        if player.updating or player.update:
+        if not player or not player.is_connected or player.updating or player.update:
             return
 
         await player.invoke_controller()
