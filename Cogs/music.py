@@ -101,7 +101,8 @@ class Player(wavelink.Player):
             try:
                 song = await asyncio.wait_for(self.queue.get(), timeout=30)
             except asyncio.TimeoutError:
-                await self.bot.get_channel(self.controller_channel_id).send(embed=discord.Embed(description="Leaving due to inactivity!", color=0x36393E))
+                if self.controller_channel_id is not None:
+                    await self.bot.get_channel(self.controller_channel_id).send(embed=discord.Embed(description="Leaving due to inactivity!", color=0x36393E))
                 return await self.destroy()
             if not song:
                 continue
@@ -300,8 +301,8 @@ class music(commands.Cog):
 
     async def initiate_nodes(self):
         nodes = {'MAIN': {'host': '127.0.0.1',
-                          'port': 8080,
-                          'rest_url': 'http://127.0.0.1:8080',
+                          'port': 8081,
+                          'rest_url': 'http://127.0.0.1:8081',
                           'password': "BOBTHEBUILDER",
                           'identifier': self.bot.settings['music_node'],
                           'region': 'us_central'}}
