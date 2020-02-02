@@ -94,12 +94,14 @@ class Player(wavelink.Player):
         # We can do any pre loop prep here...
         await self.set_volume(self.volume)
 
-        while True:
+        while self.is_connected:
             self.next_event.clear()
 
             self.inactive = False
-
-            song = await self.queue.get()
+            try:
+                song = await asyncio.wait_for(self.queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                return await self.destroy()
             if not song:
                 continue
 
@@ -123,11 +125,16 @@ class Player(wavelink.Player):
             self.skips.clear()
             self.repeats.clear()
 
-    async def invoke_controller(self, track: wavelink.Track = None):
+    async def invoke_controller(self, track: wavelink.Track = None, channel: discord.TextChannel=None):
         """Invoke our controller message, and spawn a reaction controller if one isn't alive."""
         streaming = "\U0001f534 streaming"
         if not track:
             track = self.current
+        if not channel:
+            channel = self.bot.get_channel(self.controller_channel_id)
+        else:
+            self.controller_channel_id = channel.id
+
         if self.updating:
             return
 
@@ -157,9 +164,9 @@ class Player(wavelink.Player):
             except discord.HTTPException:
                 pass
 
-            self.controller_message = await self.bot.get_channel(self.controller_channel_id).send(embed=embed)
+            self.controller_message = await channel.send(embed=embed)
         elif not self.controller_message:
-            self.controller_message = await self.bot.get_channel(self.controller_channel_id).send(embed=embed)
+            self.controller_message = await channel.send(embed=embed)
         else:
             self.updating = False
             return await self.controller_message.edit(embed=embed, content=None)
