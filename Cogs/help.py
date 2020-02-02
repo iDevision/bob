@@ -40,7 +40,7 @@ class HelpPaginator(Pages):
             self.embed.add_field(name=signature, value=entry.brief or entry.short_doc or "No help given", inline=False)
 
         if self.maximum_pages:
-            self.embed.set_author(name=f'Page {page}/{self.maximum_pages} ({self.total} commands)')
+            self.embed.set_author(name=f'Page {page}/{self.maximum_pages} ({self.total} commands)', icon_url="https://cdn.discordapp.com/attachments/646766038834479164/647215699437027339/Devision_eye.png")
 
     async def show_help(self):
         """shows this message"""
@@ -92,17 +92,17 @@ class HelpPaginator(Pages):
 import inspect
 class PaginatedHelpCommand(commands.HelpCommand):
     default_help_categories = inspect.cleandoc("""
-    ⚒ settings
-    🛡 automod
-    💾 modlogs
-    📝 customcommands
-    👋 community
-    ✏️ tags
-    💬 quotes
-    🌀 misc
-    \U0001f3bc music (beta)
-    \N{CLOSED MAILBOX WITH RAISED FLAG} highlight
-    <:thonkhammer:629899044059217931> moderation
+    <:wrench:585880691267469332> settings
+    <:cctv:587262240688701440> automod
+    <:filterremove:585880690839650352> modlogs
+    <:notebooxmultiple:586931039100993567> customcommands
+    <:pollbox:586931039067439104> community
+    <:clipboardtextoutline:585880690772672533>️ tags
+    <:messageprocessing:585880691040845947> quotes
+    <:asterisk:586930584639635466> misc
+    <:music:586930584627183646> music
+    <:at:587264378731102218> highlight
+    <:gavel:585880691011616789> moderation
     """)
     def __init__(self):
         super().__init__(command_attrs={
@@ -177,14 +177,14 @@ class PaginatedHelpCommand(commands.HelpCommand):
         return f'{alias} {command.signature}'
 
     async def send_bot_help(self, mapping):
-        ctx = self.context
         e = discord.Embed(color=discord.Color.teal())
-        e.set_footer(text="Made by IAmTomahawkx#1000")
+        e.set_footer(text=f"Your Server's prefix is: {self.context.prefix}")
         e.add_field(name="Help Categories", value=self.default_help_categories)
         v = "[support server](https://discord.gg/wcVHh4h) | [invite!]" \
             "(https://discordapp.com/api/oauth2/authorize?client_id=587482154938794028&permissions=2146958839&scope=bot)"
-        e.add_field(name="Links", value=v)
         e.add_field(name=f"Updates in version {self.context.bot.version}", value=self.context.bot.most_recent_change)
+        e.add_field(name="Links", value=v, inline=False)
+        e.set_image(url="https://cdn.discordapp.com/attachments/647604857544638468/647606721954447360/Devision.png")
         targ = self.get_destination()
         await targ.send(embed=e)
 
