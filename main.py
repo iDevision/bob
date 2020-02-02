@@ -265,7 +265,7 @@ class Bot(commands.Bot):
         return self.categories.pop(name)
 
     async def on_message(self, message):
-                if message.author.bot or not bot.is_ready() or not bot.setup:
+        if message.author.bot or not bot.is_ready() or not bot.setup:
             return
         ctx = await self.get_context(message)
         if ctx.command is None and self.user in message.mentions:
@@ -318,6 +318,7 @@ bot.load_extension("Cogs.events")
 bot.load_extension("Cogs.reactionroles")
 bot.load_extension("Cogs.dbl")
 bot.load_extension("Cogs.help")
+bot.load_extension("Cogs.BS")
 #bot.load_extension("Cogs.socket")
 #bot.load_extension("Cogs.twitch")
 
