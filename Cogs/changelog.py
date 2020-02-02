@@ -25,10 +25,11 @@ changes = {
     "V1.4.7": "hotfix\n- fixed the annoying text at the bottom of the !ping graph",
     "V1.4.8": "hotfix\n- fixed permission error where there was no dj in the music module",
     "V1.4.9": "hotfix\n- fixed some errors due to no permissions in modlogs\n- fixed the error reporting system (long overdue)\n- fixed up some highlight problems",
-    "V1.4.10": "hotfix\n- fixed an issue with automod not caching properly. Automod should work once again!"
-    #"V1.4.11a": "- Removed qotd module\n- QOL updates to !remove\n- fixed some module states not caching properly\n- major preparations for the twitch bot launch"
+    "V1.4.10": "hotfix\n- fixed an issue with automod not caching properly. Automod should work once again!",
+    "V1.4.11": "hotfix\n- added some ping responses\n- fixed up help command"
+    #"V1.4.12a": "- Removed qotd module\n- QOL updates to !remove\n- fixed some module states not caching properly\n- major preparations for the twitch bot launch\n- added some ping responses\n- fixed up help command\n"
 }
-version = "1.4.10"
+version = "1.4.11"
 
 most_recent = changes["V"+version]
 
