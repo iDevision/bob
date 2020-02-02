@@ -265,11 +265,12 @@ class Bot(commands.Bot):
         return self.categories.pop(name)
 
     async def on_message(self, message):
-        if message.author.bot or not bot.is_ready() or not bot.setup:
+                if message.author.bot or not bot.is_ready() or not bot.setup:
             return
-        await self.process_commands(message)
-        if message.guild is not None:
-            self.dispatch("points_payout", message)
+        ctx = await self.get_context(message)
+        if ctx.command is None and self.user in message.mentions:
+            return await self.get_cog("Bull").run_ping(ctx)
+        await self.invoke(ctx)
         if message.guild is not None and message.guild.id in self.custom_guilds:
             await self.custom_guilds[message.guild.id].get_message(message, message.author, message.guild)
 
