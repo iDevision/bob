@@ -94,7 +94,7 @@ class Player(wavelink.Player):
         # We can do any pre loop prep here...
         await self.set_volume(self.volume)
 
-        while self.is_connected:
+        while True:
             self.next_event.clear()
 
             self.inactive = False
@@ -114,6 +114,9 @@ class Player(wavelink.Player):
             # Invoke our controller if we aren't already...
             if not self.update:
                 await self.invoke_controller()
+
+            if not self.is_connected:
+                return
 
             # Wait for TrackEnd event to set our event...
             await self.next_event.wait()
@@ -474,7 +477,7 @@ class music(commands.Cog):
         if not player or not player.is_connected or player.updating or player.update:
             return
 
-        await player.invoke_controller()
+        await player.invoke_controller(channel=ctx.channel)
 
     @commands.command(name='pause')
     @checker()
