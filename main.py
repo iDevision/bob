@@ -91,8 +91,8 @@ async def get_pre(bot, message):
     if not bot.setup:
         return bot.user.mention
     if message.guild is None:
-        return ["!", "?"]
-    l = [bot.guild_prefixes[message.guild.id], f"<@{ids[bot.run_bot]}> "]
+        return ["!", "?", ""]
+    l = [bot.guild_prefixes[message.guild.id], f"<@{ids[bot.run_bot]} >", f"<@!{ids[bot.run_bot]} >"]
     if await bot.is_owner(message.author):
         l.append("$")
     return l
