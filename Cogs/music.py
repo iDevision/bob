@@ -101,6 +101,7 @@ class Player(wavelink.Player):
             try:
                 song = await asyncio.wait_for(self.queue.get(), timeout=30)
             except asyncio.TimeoutError:
+                await self.bot.get_channel(self.controller_channel_id).send(embed=discord.Embed(description="Leaving due to inactivity!", color=0x36393E))
                 return await self.destroy()
             if not song:
                 continue
@@ -158,7 +159,14 @@ class Player(wavelink.Player):
         embed.description = stuff + "```"
         if self.controller_channel_id is None:
             self.controller_channel_id = track.channel.id
-        if not await self.is_current_fresh(track.channel) and self.controller_message:
+        if self.controller_message and channel.id != self.controller_message.id:
+            try:
+                await self.controller_message.delete()
+            except discord.HTTPException:
+                pass
+
+            self.controller_message = await channel.send(embed=embed)
+        elif not await self.is_current_fresh(channel) and self.controller_message:
             try:
                 await self.controller_message.delete()
             except discord.HTTPException:
@@ -429,7 +437,7 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         if not player.is_connected:
-            return await ctx.send('Bot is not connected to voice. Please join a voice channel to play music.')
+            return await ctx.send('Bob is not connected to voice. Please join a voice channel to play music.')
 
         if not player.dj:
             player.dj = ctx.author
@@ -453,7 +461,7 @@ class music(commands.Cog):
             await player.queue.put(Track(track.id, track.info, ctx=ctx))
 
         if player.controller_message and player.is_playing:
-            await player.invoke_controller()
+            await player.invoke_controller(ctx.channel)
 
     @commands.command(name='np', aliases=['current', 'currentsong'])
     @commands.cooldown(2, 15, commands.BucketType.user)
@@ -564,7 +572,7 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         await player.destroy_controller()
-        await player.disconnect()
+        await player.destroy()
 
     @commands.command(name='volume', aliases=['vol'])
     @commands.cooldown(1, 2, commands.BucketType.guild)
