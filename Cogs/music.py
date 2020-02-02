@@ -461,7 +461,7 @@ class music(commands.Cog):
             await player.queue.put(Track(track.id, track.info, ctx=ctx))
 
         if player.controller_message and player.is_playing:
-            await player.invoke_controller(ctx.channel)
+            await player.invoke_controller(channel=ctx.channel)
 
     @commands.command(name='np', aliases=['current', 'currentsong'])
     @commands.cooldown(2, 15, commands.BucketType.user)
@@ -763,7 +763,7 @@ class music(commands.Cog):
         player.eq = eq.capitalize()
         await ctx.send(f'The player Equalizer was set to - {eq.capitalize()}')
 
-    @commands.command()
+    @commands.command(aliases=["wavelink", "wl", "ll"])
     @checker()
     async def musicinfo(self, ctx):
         """Retrieve various Node/Server/Player information."""
