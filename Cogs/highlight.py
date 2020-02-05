@@ -17,10 +17,9 @@ class _highlight(commands.Cog):
         self.bot.loop.create_task(self.build_full_cache())
 
     def format_message(self, cont: str):
-        v = commands.utils.escape_markdown(cont)
-        if len(v) > 100:
-            v = v[0:100] + "..."
-        return v
+        if len(cont) > 100:
+            cont = cont[0:100] + "..."
+        return cont
 
     async def assemble_messages(self, trigger_msg: commands.Message, target: commands.User)->list:
         around = trigger_msg.channel.history(limit=9, around=trigger_msg, oldest_first=True)
@@ -128,9 +127,22 @@ class _highlight(commands.Cog):
         """
         add a word to trigger highlights
         """
+        if len(word) < 3:
+            return await ctx.send("Word is too small")
         await self.db.execute("INSERT INTO highlights VALUES (?,?,?)", ctx.guild.id, ctx.author.id, word)
         await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"added `{word}` to your highlight triggers")
+
+    @highlight.command()
+    @commands.guild_only()
+    @commands.check_module("highlight")
+    async def clear(self, ctx):
+        """
+        clears your highlight triggers and blocks. this is not reversible
+        """
+        await self.db.execute("DELETE FROM highlights WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
+        await self.db.execute("DELETE FROM hl_blocks WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
+        await ctx.send("cleared your highlight triggers and blocks")
 
     @highlight.command()
     @commands.guild_only()
@@ -150,7 +162,7 @@ class _highlight(commands.Cog):
         """
         block a user or a channel from triggering highlights for you
         """
-        await self.db.execute("INSERT INTO hl_blocks (?,?,?,?)", ctx.guild.id, ctx.author.id, channel_or_person.id, 0 if isinstance(channel_or_person, commands.User) else 1)
+        await self.db.execute("INSERT INTO hl_blocks VALUES (?,?,?,?)", ctx.guild.id, ctx.author.id, channel_or_person.id, 0 if isinstance(channel_or_person, commands.User) else 1)
         await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"added {channel_or_person} to your block list")
 
