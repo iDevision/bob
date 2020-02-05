@@ -1,25 +1,30 @@
-# credit to danny for the reading of sphinx.
+# most of the actual reading-of-docs stuff here is borrowed from R. Danny
 import io
 import os
 import re
 import zlib
 
 import discord
+from discord.ext import commands as _root_commands, tasks as _root_tasks
 
 from utils import checks, errors, paginator
 from utils import db, commands
+import inspect
+import aiohttp
 
 
 def setup(bot):
     bot.add_cog(_rtfm(bot))
 
-def finder(text, collection, *, key=None, lazy=True):
+def finder(text, collection, labels=True, *, key=None, lazy=True):
     suggestions = []
     text = str(text)
     pat = '.*?'.join(map(re.escape, text))
     regex = re.compile(pat, flags=re.IGNORECASE)
     for item in collection:
         to_search = key(item) if key else item
+        if not labels and to_search.startswith("label:"):
+            continue
         r = regex.search(to_search)
         if r:
             suggestions.append((len(r.group()), r.start(), item))
@@ -122,15 +127,14 @@ class _rtfm(commands.Cog):
                 location = location[:-1] + name
 
             key = name if dispname == '-' else dispname
-
-            if projname == 'discord.py':
-                key = key.replace('discord.ext.commands.', '').replace('discord.', '')
+            if subdirective == "label":
+                key = "label:"+key
 
             result[key] = os.path.join(url, location)
 
         return result
 
-    async def build_rtfm_lookup_table(self):
+    async def build_rtfm_lookup_table(self, to_index=None):
         v = await self.db.fetchall("SELECT * FROM default_rtfm")
         pages = await self.db.fetchall("SELECT * FROM pages")
         for gid, default in v:
@@ -139,50 +143,42 @@ class _rtfm(commands.Cog):
         cache = {}
         for quick, long, url in pages:
             self.pages[quick] = {"quick": quick, "long":long, "url":url}
+            if quick != to_index:
+                continue
+
             sub = cache[quick] = {}
             async with self.bot.session.get(url + '/objects.inv') as resp:
                 if resp.status != 200:
-                    raise RuntimeError('Cannot build rtfm lookup table, try again later.')
+                    raise commands.CommandError(f'Cannot build rtfm lookup table, try again later. (no objects.inv found at {url})')
 
                 stream = SphinxObjectFileReader(await resp.read())
                 cache[quick] = self.parse_object_inv(stream, url)
+        if self._rtfm_cache is None:
+            self._rtfm_cache = cache
+        else:
+            self._rtfm_cache.update(cache)
 
-        self._rtfm_cache = cache
-
-    async def do_rtfm(self, ctx, key, obj):
+    async def do_rtfm(self, ctx, key, obj, labels=True):
         if ctx.guild.id in self.defaults and key is None:
             key = self.defaults[ctx.guild.id]
-
 
         if obj is None:
             await ctx.send(self.pages[key]['url'])
             return
-
-        obj = re.sub(r'^(?:discord\.(?:ext\.)?)?(?:commands\.)?(.+)', r'\1', obj)
-
-        if key.startswith('dpy'):
-            # point the abc.Messageable types properly:
-            q = obj.lower()
-            for name in dir(discord.abc.Messageable):
-                if name[0] == '_':
-                    continue
-                if q == name:
-                    obj = f'abc.Messageable.{name}'
-                    break
 
         cache = list(self._rtfm_cache[key].items())
 
         def transform(tup):
             return tup[0]
 
-        matches = finder(obj, cache, key=lambda t: t[0], lazy=False)[:8]
-        #matches = difflib.get_close_matches(obj, cache, 8)
+        matches = finder(obj, cache, labels, key=lambda t: t[0], lazy=False)[:8]
 
-        e = discord.Embed(colour=discord.Colour.teal())
+        e = discord.Embed(colour=0x36393E)
         if len(matches) == 0:
             return await ctx.send('Could not find anything. Sorry.')
 
-        e.description = '\n'.join(f'[`{key}`]({url})' for key, url in matches)
+        e.title = obj
+        e.description = '\n'.join(f'[`{key.replace("label::", "")}`]({url})' for key, url in matches)
         await ctx.send(embed=e)
 
     @commands.group(aliases=['rtfd', "rtm", "rtd"], invoke_without_command=True)
@@ -190,10 +186,14 @@ class _rtfm(commands.Cog):
         """
         read-the-f*cking-docs!! see `!help rtfm`
         """
+        labels = True
         if obj is not None:
+            if "--no-labels" in obj:
+                labels = False
+                obj = obj.replace("--no-labels", "")
             from discord.ext.commands.view import StringView
             view = StringView(obj)
-            key = view.get_quoted_word()  # check if the first arg is specifying a certain rtfm
+            key = view.get_word()  # check if the first arg is specifying a certain rtfm
             if key in self.pages:
                 approved_key = key
                 view.skip_ws()
@@ -207,14 +207,18 @@ class _rtfm(commands.Cog):
             approved_key = self.defaults[ctx.guild.id]
         else:
             raise errors.CommandInterrupt("No rtfm selected, and no default rtfm is set for your guild.")
-        await self.do_rtfm(ctx, approved_key, obj)
+        if self._rtfm_cache is None or approved_key not in self._rtfm_cache:
+            async with ctx.typing():
+                await self.build_rtfm_lookup_table(approved_key)
+        await self.do_rtfm(ctx, approved_key, obj, labels)
 
     @rtfm.command()
     async def list(self, ctx):
         """
-        shows a list of the current documentation entries. you can use the short name to use the doc. ex: !rtfm py lalaall
+        shows a list of the current documentation entries. you can use the short name to use the doc. ex: !rtfm py {insert thing here}
         """
-        entries = [(self.pages[a]['quick'], f"{self.pages[a]['long']}\n\n{self.pages[a]['url']}") for a in self.pages]
+        all_entries = await self.db.fetchall("SELECT * FROM pages")
+        entries = [(a[0] + f" {'(loaded)' if a[0] in self.pages else '(unloaded)'}", f"{a[1]}\n{a[2]}") for a in all_entries]
         pages = paginator.FieldPages(ctx, entries=entries)
         await pages.paginate()
 
@@ -246,7 +250,7 @@ class _rtfm(commands.Cog):
             if "cancel" in m.content:
                 raise errors.CommandInterrupt("aborting")
         await ctx.send(f"{ctx.author.mention} --> by adding documentation, you agree that you have read the rules to adding documentation. type cancel to abort the creation process")
-        await ctx.send(f"{ctx.author.mention} --> please provide a quick default for your rtfm (used when not accessing your guild's default, max 7 characters)")
+        await ctx.send(f"please provide a quick default for your rtfm (used when not accessing your guild's default, max 7 characters)")
         msg = await ctx.bot.wait_for("message", check=lambda m: m.channel == ctx.channel and m.author == ctx.author, timeout=30)
         quick = await commands.clean_content().convert(ctx, msg.content)
         if len(quick) > 7:
@@ -261,10 +265,11 @@ class _rtfm(commands.Cog):
         msg = await ctx.bot.wait_for("message", check=lambda m: m.channel == ctx.channel and m.author == ctx.author, timeout=30)
         url = await commands.clean_content().convert(ctx, msg.content)
         try:
-            await self.bot.session.get(url+"/objects.inv")
-        except:
-            raise errors.CommandInterrupt("Invalid url provided. remember to remove the current page! ex. https://docs.readthedocs.io/latest")
-        await self.db.execute("INSERT INTO waiting VALUES (?,?,?,?)", ctx.author.id, quick, long, url)
+            v = await self.bot.session.get(url.strip("/")+"/objects.inv") #type: aiohttp.ClientResponse
+            if v.status == 404: raise commands.CommandError
+        except commands.CommandError:
+            raise errors.CommandInterrupt("Invalid url provided (no /objects.inv found). remember to remove the current page! ex. https://docs.readthedocs.io/latest")
+        await self.db.execute("INSERT INTO waiting VALUES (?,?,?,?)", ctx.author.id, quick, long, url.strip("/"))
         chan = ctx.bot.get_channel(625461752792088587)
         e = discord.Embed()
         e.add_field(name="quick", value=quick)
@@ -313,11 +318,61 @@ class _rtfm(commands.Cog):
                 await ctx.send("Users DMs are blocked. Can't dm approval")
         await self.db.execute("DELETE FROM waiting WHERE quick IS ?", quick)
 
+    @rtfm.command(hidden=True)
+    @commands.is_owner()
+    async def remove(self, ctx, quick: str):
+        await self.db.execute("DELETE FROM pages WHERE quick IS ?", quick)
+        if quick in self.pages:
+            del self.pages[quick]
+            return await ctx.send(f"removed `{quick}` from rtfm")
+        await ctx.send(f"`{quick}` not found")
 
     @rtfm.before_invoke
     @default.before_invoke
     @list.before_invoke
     async def rtfm_pre(self, ctx):
-        if not self._rtfm_cache:
-            await ctx.trigger_typing()
-            await self.build_rtfm_lookup_table()
+        if not self.defaults:
+            v = await self.db.fetchall("SELECT * FROM default_rtfm")
+            for gid, default in v:
+                self.defaults[gid] = default
+
+    @commands.command()
+    async def rtfs(self, ctx, search):
+        """
+        gets the source for an object from the discord.py library
+        """
+        overhead = ""
+        raw_search = search
+        searches = []
+        if "." in search:
+            searches = search.split(".")
+            search = searches[0]
+            searches = searches[1:]
+        get = getattr(discord, search, None)
+        if get is None:
+            get = getattr(_root_commands, search, None)
+            if get is None:
+                get = getattr(_root_tasks, search, None)
+        if get is None:
+            return await ctx.send(f"Nothing found under `{raw_search}`")
+        if inspect.isclass(get) or searches:
+            if searches:
+                for i in searches:
+                    last_get = get
+                    get = getattr(get, i, None)
+                    if get is None and last_get is None:
+                        return await ctx.send(f"Nothing found under ")
+                    elif get is None:
+                        overhead = f"Couldn't find `{i}` under `{last_get.__name__}`, showing source for `{last_get.__name__}`\n\n"
+                        get = last_get
+                        break
+        if isinstance(get, property):
+            get = get.fget
+
+        lines, firstlineno = inspect.getsourcelines(get)
+        module = get.__module__
+        location = module.replace('.', '/') + '.py'
+
+        ret = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}"
+        final = f"{overhead}[{location}]({ret}/{location}#L{firstlineno}-L{firstlineno + len(lines) - 1})"
+        await ctx.send(embed=ctx.embed_invis(description=final))
