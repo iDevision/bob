@@ -26,7 +26,7 @@ class automodCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        v = await self.db.fetchrow("SELECT * FROM automod_config")
+        v = await self.db.fetchall("SELECT * FROM automod_config")
         for i in v:
             gid, channel, banned_words_punishment, message_spam_messages, message_spam_delay, message_spam_punishment, mass_mentions_max, mass_mentions_punishment, all_caps_punishment, all_caps_percent, invites_punishment, links_punishment = i
             self.bot.automod_states[gid] = {"banned_words_punishment": banned_words_punishment, "message_spam_messages": message_spam_messages, "message_spam_delay": message_spam_delay,
