@@ -28,20 +28,14 @@ class automodCog(commands.Cog):
     async def on_ready(self):
         v = await self.db.fetchrow("SELECT * FROM automod_config")
         for i in v:
-            if i is None:
-                await self.on_guild_join(self.bot.get_guild(i[0]))
-                continue
-            gid, channel, banned_words_punishment, message_spam_messages, message_spam_delay, message_spam_punishment, mass_mentions_max, mass_mentions_punishment, all_caps_punishment, all_caps_percent, invites_punishment, links_punishment = v
+            gid, channel, banned_words_punishment, message_spam_messages, message_spam_delay, message_spam_punishment, mass_mentions_max, mass_mentions_punishment, all_caps_punishment, all_caps_percent, invites_punishment, links_punishment = i
             self.bot.automod_states[gid] = {"banned_words_punishment": banned_words_punishment, "message_spam_messages": message_spam_messages, "message_spam_delay": message_spam_delay,
              "message_spam_punishment": message_spam_punishment, "mass_mentions_max": mass_mentions_max, "mass_mentions_punishment": mass_mentions_punishment,
              "all_caps_punishment": all_caps_punishment, "all_caps_percent": all_caps_percent, "invites_punishment": invites_punishment, "links_punishment": links_punishment,
              "banned_words": [], "channel": channel}
             c = await self.db.fetchall("SELECT word FROM automod_banned_words WHERE guild_id IS ?", gid)
             if c:
-                try:
-                    self.bot.automod_states[gid]['banned_words'] = [a[0] for a in c]
-                except:
-                    pass
+                self.bot.automod_states[gid]['banned_words'] = [a[0] for a in c]
 
     @commands.group(invoke_without_command=True, usage="[subcommands]")
     async def automod(self, ctx):
