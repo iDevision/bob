@@ -251,15 +251,20 @@ class _rtfm(commands.Cog):
             await self.db.execute("INSERT INTO default_rtfm VALUES (?,?)", ctx.guild.id, default)
             await ctx.send(f"set the guild's default rtfm to `{self.pages[default]['long']}`")
 
-    @rtfm.command()
-    async def add(self, ctx):
+    @rtfm.command(usage="")
+    async def add(self, ctx, quick=None, long=None, url=None):
         """
         have some documentation you want to see here? use this command to submit it for review!
         there are a few requirements for your docs to be approved.
         - it **must** be created with Sphinx.
         - it must be on readthedocs.io/.com or pythonhosted.org
         the bot will dm you when your request is approved or denied.
+        you will be prompted for the documentation information
         """
+        if await ctx.bot.is_owner(ctx.author) and quick and long and url:
+            await self.db.execute("INSERT INTO pages VALUES (?,?,?)", quick, long, url)
+            self.pages[quick] = {"quick": quick, "long": long, "url": url}
+            return await ctx.send("\U0001f44d")
         async def check_cancel(ctx, m):
             if "cancel" in m.content:
                 raise errors.CommandInterrupt("aborting")
@@ -313,7 +318,6 @@ class _rtfm(commands.Cog):
         await self.db.execute("INSERT INTO pages VALUES (?,?,?)", quick, long, url)
         await self.db.execute("DELETE FROM waiting WHERE quick IS ?", quick)
         self.pages[quick] = {"quick": quick, "long": long, "url": url}
-        await self.build_rtfm_lookup_table()
 
     @rtfm.command(hidden=True)
     @commands.is_owner()
