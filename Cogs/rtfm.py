@@ -171,7 +171,7 @@ class _rtfm(commands.Cog):
             self._rtfm_cache.update(cache)
 
     async def do_rtfm(self, ctx, key, obj, labels=True, obvious_labels=False):
-        if ctx.guild.id in self.defaults and key is None:
+        if ctx.guild is not None and ctx.guild.id in self.defaults and key is None:
             key = self.defaults[ctx.guild.id]
 
         if obj is None:
@@ -186,7 +186,7 @@ class _rtfm(commands.Cog):
         if len(matches) == 0:
             return await ctx.send('Could not find anything. Sorry.')
 
-        e.title = obj
+        e.title = f"{key}: {obj}"
         e.description = '\n'.join(f'[`{key.replace("label:", "") if not obvious_labels else key}`]({url})' for key, url in matches)
         await ctx.send(embed=e)
 
@@ -395,8 +395,11 @@ class _rtfm(commands.Cog):
             get = get.fget
 
         lines, firstlineno = inspect.getsourcelines(get)
-        module = get.__module__
-        location = module.replace('.', '/') + '.py'
+        try:
+            module = get.__module__
+            location = module.replace('.', '/') + '.py'
+        except AttributeError:
+            location = get.__name__.replace(".", "/") + ".py"
 
         ret = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}"
         final = f"{overhead}[{location}]({ret}/{location}#L{firstlineno}-L{firstlineno + len(lines) - 1})"
