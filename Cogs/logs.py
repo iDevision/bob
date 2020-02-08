@@ -86,7 +86,7 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
             klogs = klogs[0]
         except:
             try:
-                if time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(blogs[0].created_at.timetuple()) > 3 and ml:
+                if time.gmtime() - blogs[0].created_at.timestamp() > 3 and ml:
                     await self.log("**User Left**", f"{member}", [], member.guild,
                                    color=discord.Color.red(), footer=(f"id: {member.id}", discord.Embed.Empty))
                 else:
@@ -99,7 +99,7 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         try:
             blogs = blogs[0]
         except:
-            if time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(klogs.created_at.timetuple()) > 3:
+            if time.gmtime() - klogs.created_at.timestamp() > 2:
                 # must be a kick, theres no bans within the last 3 seconds.
                 if not mk:
                     return
@@ -110,11 +110,11 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
             if not ml:
                 return
             await self.log("**User Left**", f"{member.mention} - {member}", [], member.guild, color=discord.Color.red(), footer=(f"id: {member.id}", discord.Embed.Empty))
-        elif not klogs and time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(blogs.created_at.timetuple()) > 3:
+        elif not klogs and time.gmtime() - blogs.created_at.timestamp() > 2:
             if not ml:
                 return
             await self.log("**User Left**", f"{member.mention} - {member}", [], member.guild, color=discord.Color.red(), footer=(f"id: {member.id}", discord.Embed.Empty))
-        elif time.mktime(datetime.datetime.utcnow().timetuple()) - time.mktime(klogs.created_at.timetuple()) < 3:
+        elif time.gmtime() - klogs.created_at.timestamp() < 2:
             if not mk:
                 return
             await self.on_member_kicketh(member, klogs.user) # user has been yeeted
@@ -128,13 +128,21 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
                         ("User", member.mention + f"\nname: {str(member)}\nid: {member.id}")], member.guild,
                        color=discord.Color.red())
 
-    async def on_member_banish(self, member, mod):
+    async def on_member_banish(self, member, mod, audit):
         enabled = await self.db.fetch("SELECT member_isbanned FROM modlogs WHERE guild_id IS ?", member.guild.id)
         if not enabled:
             return
+        if audit is None:
+            return await self.log("**User Banned**",
+                                  "(Unable to resolve the moderator responsible, I can't see the audit logs!)",
+                                  [
+                                      ("User", member.mention + f"\nname: {str(member)}\nid: {member.id}")],
+                                  member.guild,
+                                  color=discord.Color.red())
         await self.log("**User Banned**", discord.Embed.Empty,
-                       [("Moderator", mod.mention + "\nname: " + str(mod.name) + "\nid: " + str(mod.id)),
-                        ("User", member.mention + f"\nname: {str(member)}\nid: {member.id}")], member.guild,
+                       [("User", member.mention + f"\nname: {str(member)}\nid: {member.id}"),
+                        ("Moderator", mod.mention + f"\nname: {mod.name}\nid: {mod.id}\nreason: {audit.reason}")
+                        ], member.guild,
                        color=discord.Color.red())
 
     @commands.Cog.listener()
@@ -147,6 +155,8 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
                                                                      ("**After**", str(after.nick))],
                            before.guild, footer=(f"id: {after.id}", discord.Embed.Empty), author=(str(after),
                                                                                                   after.avatar_url))
+        if before.roles != after.roles:
+            pass
 
     @commands.Cog.listener()
     async def on_message_delete(self, message):
@@ -260,12 +270,9 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
     @commands.Cog.listener()
     async def on_member_ban(self, guild, member):
         if not self.has_permission(guild):
-            return await self.log("**User Banned**", "(Unable to resolve the moderator responsible, I can't see the audit logs!)",
-                       [
-                        ("User", member.mention + f"\nname: {str(member)}\nid: {member.id}")], member.guild,
-                       color=discord.Color.red())
+            return await self.on_member_banish(member, None, None)
         log = await self.get_audit_logs(guild, limit=1, action=discord.AuditLogAction.ban)
-        await self.on_member_banish(member, log[0].user)
+        await self.on_member_banish(member, log[0].user, log[0])
 
 
     @commands.Cog.listener()
