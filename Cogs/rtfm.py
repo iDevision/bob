@@ -82,8 +82,12 @@ class _rtfm(commands.Cog):
         self.pages = {}
         self.usage = {}
         self._rtfm_cache = None
+        self.offload_unused_cache.start()
 
-    @_root_tasks.loop(minutes=20)
+    def cog_unload(self):
+        self.offload_unused_cache.cancel()
+
+    @_root_tasks.loop(minutes=1)
     async def offload_unused_cache(self):
         now = datetime.datetime.utcnow()
         for key, i in self.usage.items():
@@ -262,6 +266,8 @@ class _rtfm(commands.Cog):
         you will be prompted for the documentation information
         """
         if await ctx.bot.is_owner(ctx.author) and quick and long and url:
+            if quick in self.pages:
+                return await ctx.send("Already exists")
             await self.db.execute("INSERT INTO pages VALUES (?,?,?)", quick, long, url)
             self.pages[quick] = {"quick": quick, "long": long, "url": url}
             return await ctx.send("\U0001f44d")
