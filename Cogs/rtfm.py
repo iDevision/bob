@@ -3,6 +3,7 @@ import io
 import os
 import re
 import zlib
+import datetime
 
 import discord
 from discord.ext import commands as _root_commands, tasks as _root_tasks
@@ -79,11 +80,19 @@ class _rtfm(commands.Cog):
         self.db = db.Database("rtfm")
         self.defaults = {}
         self.pages = {}
+        self.usage = {}
         self._rtfm_cache = None
+
+    @_root_tasks.loop(minutes=20)
+    async def offload_unused_cache(self):
+        now = datetime.datetime.utcnow()
+        for key, i in self.usage.items():
+            if (now-i).minute >= 20 and key in self._rtfm_cache:
+                del self._rtfm_cache[key]
+
 
     def parse_object_inv(self, stream, url):
         # key: URL
-        # n.b.: key doesn't have `discord` or `discord.ext.commands` namespaces
         result = {}
 
         # first line is version info
@@ -146,7 +155,6 @@ class _rtfm(commands.Cog):
             if quick != to_index:
                 continue
 
-            sub = cache[quick] = {}
             async with self.bot.session.get(url + '/objects.inv') as resp:
                 if resp.status != 200:
                     raise commands.CommandError(f'Cannot build rtfm lookup table, try again later. (no objects.inv found at {url})')
@@ -158,7 +166,7 @@ class _rtfm(commands.Cog):
         else:
             self._rtfm_cache.update(cache)
 
-    async def do_rtfm(self, ctx, key, obj, labels=True):
+    async def do_rtfm(self, ctx, key, obj, labels=True, obvious_labels=False):
         if ctx.guild.id in self.defaults and key is None:
             key = self.defaults[ctx.guild.id]
 
@@ -168,9 +176,6 @@ class _rtfm(commands.Cog):
 
         cache = list(self._rtfm_cache[key].items())
 
-        def transform(tup):
-            return tup[0]
-
         matches = finder(obj, cache, labels, key=lambda t: t[0], lazy=False)[:8]
 
         e = discord.Embed(colour=0x36393E)
@@ -178,19 +183,27 @@ class _rtfm(commands.Cog):
             return await ctx.send('Could not find anything. Sorry.')
 
         e.title = obj
-        e.description = '\n'.join(f'[`{key.replace("label::", "")}`]({url})' for key, url in matches)
+        e.description = '\n'.join(f'[`{key.replace("label:", "") if not obvious_labels else key}`]({url})' for key, url in matches)
         await ctx.send(embed=e)
 
-    @commands.group(aliases=['rtfd', "rtm", "rtd"], invoke_without_command=True)
+    @commands.group(aliases=['rtfd', "rtm", "rtd"], invoke_without_command=True, help="read-the-f*cking-docs!! see `!help rtfm`")
     async def rtfm(self, ctx, *, obj: str = None):
         """
-        read-the-f*cking-docs!! see `!help rtfm`
+        read-the-f*cking-docs!
+        view the documentation of the modules available in `rtfm list`.
+        use their *quick* name to access it in the rtfm command, as such:
+        `rtfm py sys`
+        you may pass the `--no-labels` flag to filter out labels, or the `--obvious` flag to make it obvious that something is a label
         """
         labels = True
+        obvious_labels = False
         if obj is not None:
             if "--no-labels" in obj:
                 labels = False
                 obj = obj.replace("--no-labels", "")
+            if "--obvious" in obj:
+                obvious_labels = True
+                obj = obj.replace("--obvious", "")
             from discord.ext.commands.view import StringView
             view = StringView(obj)
             key = view.get_word()  # check if the first arg is specifying a certain rtfm
@@ -210,7 +223,8 @@ class _rtfm(commands.Cog):
         if self._rtfm_cache is None or approved_key not in self._rtfm_cache:
             async with ctx.typing():
                 await self.build_rtfm_lookup_table(approved_key)
-        await self.do_rtfm(ctx, approved_key, obj, labels)
+        self.usage[approved_key] = datetime.datetime.utcnow()
+        await self.do_rtfm(ctx, approved_key, obj, labels, obvious_labels)
 
     @rtfm.command()
     async def list(self, ctx):
@@ -218,7 +232,7 @@ class _rtfm(commands.Cog):
         shows a list of the current documentation entries. you can use the short name to use the doc. ex: !rtfm py {insert thing here}
         """
         all_entries = await self.db.fetchall("SELECT * FROM pages")
-        entries = [(a[0] + f" {'(loaded)' if a[0] in self.pages else '(unloaded)'}", f"{a[1]}\n{a[2]}") for a in all_entries]
+        entries = [(a[0] + f" {'(loaded)' if a[0] in self._rtfm_cache else '(unloaded)'}", f"{a[1]}\n{a[2]}") for a in all_entries]
         pages = paginator.FieldPages(ctx, entries=entries)
         await pages.paginate()
 
@@ -335,6 +349,7 @@ class _rtfm(commands.Cog):
             v = await self.db.fetchall("SELECT * FROM default_rtfm")
             for gid, default in v:
                 self.defaults[gid] = default
+            await self.build_rtfm_lookup_table(None) # caches all the pages
 
     @commands.command()
     async def rtfs(self, ctx, search):
