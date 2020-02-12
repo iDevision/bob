@@ -40,15 +40,25 @@ class reactionroles(commands.Cog):
 
     @commands.group(aliases=['rr'])
     async def reactionrole(self, ctx):
+        """
+        allows for the creation of reaction roles! react on a message, get the corresponding role!
+        Use `reactionrole add` to add a new reaction role!
+        """
         pass
 
     @reactionrole.command(aliases=["+"])
     @checks.check_editor()
     async def add(self, ctx):
+        """
+        Adds a new reaction role.
+        Only works with the manage roles permission and the add reactions permission.
+        This command will guide you through the process of adding a reaction role.
+        You must have the `bot editor` role to use this command
+        """
         if not ctx.guild.me.guild_permissions.manage_roles:
-            return await ctx.send("I need the `manage_roles` permission to enable reaction roles!")
+            return await ctx.send("I need the `manage roles` permission to enable reaction roles!")
         if not ctx.guild.me.guild_permissions.add_reactions:
-            return await ctx.send("I need the `add_reactions` permission to enable reaction roles!")
+            return await ctx.send("I need the `add reactions` permission to enable reaction roles!")
         v = await ctx.ask("please respond with the mode you wish to set this reaction role to.\n```\n1: add on reaction\n2: remove on reaction\n3:add on reaction, remove on reaction removal\n```", return_bool=False)
         try:
             mode = int(v.strip())
@@ -85,7 +95,12 @@ class reactionroles(commands.Cog):
         await ctx.send("complete! your reaction role should now add as reacted")
 
     @reactionrole.command()
+    @commands.check_editor()
     async def remove(self, ctx):
+        """
+        removes a reaction role.
+        you must have the `bot editor` role to use this command
+        """
         try:
             channel = await commands.TextChannelConverter().convert(ctx, await ctx.ask("please respond with the channel your reaction role is in", return_bool=False))
         except:

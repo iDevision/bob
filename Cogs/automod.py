@@ -30,12 +30,16 @@ class automodCog(commands.Cog):
         for i in v:
             gid, channel, banned_words_punishment, message_spam_messages, message_spam_delay, message_spam_punishment, mass_mentions_max, mass_mentions_punishment, all_caps_punishment, all_caps_percent, invites_punishment, links_punishment = i
             self.bot.automod_states[gid] = {"banned_words_punishment": banned_words_punishment, "message_spam_messages": message_spam_messages, "message_spam_delay": message_spam_delay,
-             "message_spam_punishment": message_spam_punishment, "mass_mentions_max": mass_mentions_max, "mass_mentions_punishment": mass_mentions_punishment,
+             "message_spam_punishment": message_spam_punishment, "mass _mentions_max": mass_mentions_max, "mass_mentions_punishment": mass_mentions_punishment,
              "all_caps_punishment": all_caps_punishment, "all_caps_percent": all_caps_percent, "invites_punishment": invites_punishment, "links_punishment": links_punishment,
              "banned_words": [], "channel": channel}
             c = await self.db.fetchall("SELECT word FROM automod_banned_words WHERE guild_id IS ?", gid)
             if c:
                 self.bot.automod_states[gid]['banned_words'] = [a[0] for a in c]
+
+    #@commands.command()
+    #async def raid(self, ctx, mode: str):
+    #    if mode.lowered() not in ["relaxed", "moderate", "strict"]
 
     @commands.group(invoke_without_command=True, usage="[subcommands]")
     async def automod(self, ctx):
@@ -114,12 +118,12 @@ class automodCog(commands.Cog):
         pun = self.states[ctx.guild.id]['banned_words_punishment']
         words = self.states[ctx.guild.id]['banned_words']
         e = discord.Embed(title="Currently Enabled: ")
-        e.description = "True" if pun != 0 else "False"
+        e.description = "Yes" if pun != 0 else "No"
         e.add_field(name="punishment level:", value=str(pun))
         v = ""
         if words:
             for record in words:
-                v += record[0] + "\n"
+                v += record + "\n"
         else:
             v = "No Words"
         v = v.strip()
