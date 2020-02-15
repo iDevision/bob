@@ -337,7 +337,7 @@ class music(commands.Cog):
 
         return math.ceil((len(channel.members) - 1) / 2.5)
 
-    def cog_check(self, ctx):
+    async def cog_check(self, ctx):
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
         channels = await self.bot.db.fetchall("SELECT channel_id FROM music_channels WHERE guild_id IS ?", ctx.guild.id)
