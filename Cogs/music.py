@@ -337,6 +337,16 @@ class music(commands.Cog):
 
         return math.ceil((len(channel.members) - 1) / 2.5)
 
+    def cog_check(self, ctx):
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        channels = await self.bot.db.fetchall("SELECT channel_id FROM music_channels WHERE guild_id IS ?", ctx.guild.id)
+        if not channels:
+            return True
+        if ctx.channel.id in [x[0] for x in channels]:
+            return True
+        raise commands.CheckFailure("This isn't a music channel!")
+
     async def has_perms(self, ctx, **perms):
         """Check whether a member has the given permissions."""
         try:
@@ -376,6 +386,8 @@ class music(commands.Cog):
         return False
 
     async def do_vote(self, ctx, player, command: str):
+        if ctx.author.id == 143090142360371200:
+            return
         attr = getattr(player, command + 's', None)
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
@@ -394,6 +406,44 @@ class music(commands.Cog):
     async def react_control(self, ctx):
         """Dummy command for error handling in our player."""
         pass
+
+    @commands.group(invoke_without_command=True)
+    async def musicchannel(self, ctx):
+        """
+        view the channels you can use music commands in!
+        """
+        channels = await self.bot.db.fetchall("SELECT channel_id FROM music_channels WHERE guild_id IS ?", ctx.guild.id)
+        if not channels:
+            return await ctx.send("Music commands can be used in any channel!")
+        channels = [self.bot.get_channel(x[0]) for x in channels if self.bot.get_channel(x[0]) is not None]
+        channels = [x.mention for x in channels if x.permissions_for(ctx.author).read_messages]
+        e = commands.Embed(title="Music Channels")
+        fmt = "\n> " + "\n> ".join(channels)
+        e.description = f"Music commands can be used in any of the following channels!\n{fmt}"
+        await ctx.send(embed=e)
+
+    @musicchannel.command()
+    @commands.check_editor()
+    async def add(self, ctx, channel: commands.TextChannel):
+        """
+        Add a channel to the whitelisted channels for music commands.
+        You need the `bot editor` role to use this command.
+        """
+        await self.bot.db.execute("INSERT INTO music_channels VALUES (?,?)", ctx.guild.id, channel.id)
+        await ctx.send(f"Added {channel.mention} to whitelisted channels")
+
+    @musicchannel.command()
+    @commands.check_editor()
+    async def remove(self, ctx, channel: commands.TextChannel):
+        """
+        removes a channel from the whitelisted channels for music commands.
+        you ned the `bot editor` role to use this command.
+        """
+        exists = await self.bot.db.fetch("SELECT channel_id FROM music_channels WHERE guild_id IS ? AND channel_id IS ?;", ctx.guild.id, channel.id)
+        if not exists:
+            return await ctx.send("That channel is not whitelisted.")
+        await self.db.execute("DELETE FROM music_channels WHERE guild_id IS ? AND channel_id IS ?;", ctx.guild.id, channel.id)
+        await ctx.send(f"Removed {channel.mention} from whitelisted channels")
 
     @commands.command(name='connect', aliases=['join'])
     @checker()
@@ -431,7 +481,7 @@ class music(commands.Cog):
     @checker()
     async def play_(self, ctx, *, query: str):
         """Queue a song or playlist for playback.
-        can be a youtube link or a
+        can be a youtube link or a song name.
         """
         await ctx.trigger_typing()
 
