@@ -9,11 +9,9 @@ def setup(bot):
 class BT(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bt_webhook = commands.Webhook.from_url(
-            "https://discordapp.com/api/webhooks/666875784744534035/fOQp2LBNN28DEU5__wCrmni3jaD_cTttq2uCRZZQjCAMbulAUyN4ny3o7KHqor3HiWqG",
+        self.bt_webhook = commands.Webhook.from_url(bot.settings['scripts_bugbot_url'],
             adapter=commands.AsyncWebhookAdapter(self.bot.session))
-        self.bob_webhook = commands.Webhook.from_url(
-            "https://discordapp.com/api/webhooks/666878596492689408/h-2HB5gDrsNaOpF81gJE_0vPirnbTrsI__Turqd-B_7nmujau4jRHCjDS9_U5sNO52as",
+        self.bob_webhook = commands.Webhook.from_url(bot.settings['bob_bugbot_url'],
             adapter=commands.AsyncWebhookAdapter(self.bot.session))
 
     async def cog_check(self, ctx):
@@ -105,4 +103,3 @@ class BT(commands.Cog):
             await ctx.message.delete()
         except:
             pass
-
