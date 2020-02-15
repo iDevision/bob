@@ -340,6 +340,8 @@ class music(commands.Cog):
     async def cog_check(self, ctx):
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
+        if ctx.command.qualified_name == self.musicchannel.qualified_name:
+            return True
         channels = await self.bot.db.fetchall("SELECT channel_id FROM music_channels WHERE guild_id IS ?", ctx.guild.id)
         if not channels:
             return True
@@ -417,7 +419,7 @@ class music(commands.Cog):
             return await ctx.send("Music commands can be used in any channel!")
         channels = [self.bot.get_channel(x[0]) for x in channels if self.bot.get_channel(x[0]) is not None]
         channels = [x.mention for x in channels if x.permissions_for(ctx.author).read_messages]
-        e = commands.Embed(title="Music Channels")
+        e = ctx.embed_invis(title="Music Channels")
         fmt = "\n> " + "\n> ".join(channels)
         e.description = f"Music commands can be used in any of the following channels!\n{fmt}"
         await ctx.send(embed=e)
