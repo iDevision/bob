@@ -30,7 +30,7 @@ class automodCog(commands.Cog):
         for i in v:
             gid, channel, banned_words_punishment, message_spam_messages, message_spam_delay, message_spam_punishment, mass_mentions_max, mass_mentions_punishment, all_caps_punishment, all_caps_percent, invites_punishment, links_punishment = i
             self.bot.automod_states[gid] = {"banned_words_punishment": banned_words_punishment, "message_spam_messages": message_spam_messages, "message_spam_delay": message_spam_delay,
-             "message_spam_punishment": message_spam_punishment, "mass _mentions_max": mass_mentions_max, "mass_mentions_punishment": mass_mentions_punishment,
+             "message_spam_punishment": message_spam_punishment, "mass_mentions_max": mass_mentions_max, "mass_mentions_punishment": mass_mentions_punishment,
              "all_caps_punishment": all_caps_punishment, "all_caps_percent": all_caps_percent, "invites_punishment": invites_punishment, "links_punishment": links_punishment,
              "banned_words": [], "channel": channel}
             c = await self.db.fetchall("SELECT word FROM automod_banned_words WHERE guild_id IS ?", gid)
