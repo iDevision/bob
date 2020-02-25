@@ -63,7 +63,10 @@ class __quotes(commands.Cog):
         requires the `Community Manager` role or Higher
         """
         data = await self.db.fetchall("SELECT * FROM quotes WHERE guild_id IS ?", ctx.guild.id)
-        l = max(x[3] for x in data)
+        try:
+            l = max(x[3] for x in data)
+        except:
+            l = 0
         await self.db.execute("INSERT INTO quotes VALUES (?,?,?,?)",
                                   (ctx.guild.id, ctx.author.id, msg, l+1))
         await ctx.send(f"{ctx.author.mention} --> added quote {l+1}")
