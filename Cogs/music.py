@@ -36,22 +36,72 @@ class Track(wavelink.Track):
 def checker():
     return check_module("music")
 
-class Player(wavelink.Player):
+class MusicQueue(asyncio.Queue):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._queue = []
+        self.index = 0
+        self.repeat_start = None
 
-    def __init__(self, bot: Union[commands.Bot, commands.AutoShardedBot], guild_id: int, node: wavelink.Node):
+    def shuffle(self):
+        if self.repeat_start is not None:
+            n = self.repeat_start
+        else:
+            n = self.index
+        shuffle = self._queue[n:]
+        random.shuffle(shuffle)
+        old = self._queue[:n]
+        self._queue = old + shuffle
+
+    def repeat(self) -> None:
+        if self.repeat_start is not None:
+            self.repeat_start = None
+        else:
+            self.repeat_start = self.index
+
+    def _get(self) -> Track:
+        if self.repeat_start is not None:
+            diff = self.index - self.repeat_start
+            self.index += 1
+            if len(self._queue) <= self.index:
+                self.index = self.repeat_start
+            return self._queue[diff]
+
+        else:
+            r = self._queue[self.index]
+            self.index += 1
+            return r
+
+    def empty(self) -> bool:
+        if self.repeat_start is not None:
+            if len(self._queue) <= self.index:
+                self.index = self.repeat_start
+        return len(self._queue) <= self.index
+
+    @property
+    def q(self):
+        return self._queue[self.index:]
+
+    @property
+    def history(self):
+        return self._queue[:self.index]
+
+class Player(wavelink.Player):
+    def __init__(self, bot, guild_id: int, node: wavelink.Node):
         super(Player, self).__init__(bot, guild_id, node)
 
-        self.queue = asyncio.Queue()
+        self.queue = MusicQueue()
         self.next_event = asyncio.Event()
         self.controller_channel_id = None
 
-        self.volume = 40
+        self.volume = 100
         self.dj = None
         self.controller_message = None
         self.reaction_task = None
         self.update = False
         self.updating = False
         self.inactive = False
+        self.repeating = False
 
         self.controls = {'⏯': 'rp',
                          '⏹': 'stop',
@@ -77,7 +127,13 @@ class Player(wavelink.Player):
 
     @property
     def entries(self):
-        return list(self.queue._queue)
+        return self.queue.q
+
+    def repeat(self):
+        self.queue.repeat()
+
+    def shuffle(self):
+        self.queue.shuffle()
 
     async def updater(self):
         while not self.bot.is_closed():
@@ -90,7 +146,7 @@ class Player(wavelink.Player):
     async def player_loop(self):
         await self.bot.wait_until_ready()
 
-        await self.set_preq('Flat')
+        await self.set_eq(wavelink.Equalizer.flat())
         # We can do any pre loop prep here...
         await self.set_volume(self.volume)
 
@@ -99,10 +155,10 @@ class Player(wavelink.Player):
 
             self.inactive = False
             try:
-                song = await asyncio.wait_for(self.queue.get(), timeout=30)
+                song = await asyncio.wait_for(self.queue.get(), timeout=180)
             except asyncio.TimeoutError:
                 if self.controller_channel_id is not None:
-                    await self.bot.get_channel(self.controller_channel_id).send(embed=discord.Embed(description="Leaving due to inactivity!", color=0x36393E))
+                    await self.bot.get_channel(self.controller_channel_id).send(embed=discord.Embed(description="Leaving due to inactivity!", color=0x36393E), delete_after=7)
                 return await self.destroy()
             if not song:
                 continue
@@ -287,11 +343,10 @@ class Player(wavelink.Player):
             return False
         return False
 
-# noinspection PyUnresolvedReferences
 class music(commands.Cog):
     """All the tunes \U0001f3b5"""
     hidden = False
-    def __init__(self, bot: Union[commands.Bot, commands.AutoShardedBot]):
+    def __init__(self, bot):
         self.bot = bot
 
         if not hasattr(bot, 'wavelink'):
@@ -303,7 +358,7 @@ class music(commands.Cog):
         nodes = {'MAIN': {'host': '127.0.0.1',
                           'port': 8081,
                           'rest_url': 'http://127.0.0.1:8081',
-                          'password': "BOBTHEBUILDER",
+                          'password': "BOBTHEBUILDER", # no i dont really care, the ports are all closed anyways
                           'identifier': self.bot.settings['music_node'],
                           'region': 'us_central'}}
 
@@ -444,10 +499,10 @@ class music(commands.Cog):
         exists = await self.bot.db.fetch("SELECT channel_id FROM music_channels WHERE guild_id IS ? AND channel_id IS ?;", ctx.guild.id, channel.id)
         if not exists:
             return await ctx.send("That channel is not whitelisted.")
-        await self.db.execute("DELETE FROM music_channels WHERE guild_id IS ? AND channel_id IS ?;", ctx.guild.id, channel.id)
+        await self.bot.db.execute("DELETE FROM music_channels WHERE guild_id IS ? AND channel_id IS ?;", ctx.guild.id, channel.id)
         await ctx.send(f"Removed {channel.mention} from whitelisted channels")
 
-    @commands.command(name='connect', aliases=['join'])
+    @commands.command(name='connect', aliases=['join', 'summon'])
     @checker()
     async def connect_(self, ctx, *, channel: discord.VoiceChannel = None):
         """Connect to voice.
@@ -516,9 +571,6 @@ class music(commands.Cog):
             await ctx.send(f'```ini\nAdded {track.title} to the Queue\n```', delete_after=15)
             await player.queue.put(Track(track.id, track.info, ctx=ctx))
 
-        if player.controller_message and player.is_playing:
-            await player.invoke_controller(channel=ctx.channel)
-
     @commands.command(name='np', aliases=['current', 'currentsong'])
     @commands.cooldown(2, 15, commands.BucketType.user)
     @checker()
@@ -542,7 +594,9 @@ class music(commands.Cog):
             return
 
         if not player.is_connected:
-            await ctx.send('I am not currently connected to voice!')
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if player.paused:
             return
@@ -566,7 +620,9 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         if not player.is_connected:
-            await ctx.send('I am not currently connected to voice!')
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if not player.paused:
             return
@@ -581,7 +637,7 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
         await player.set_pause(False)
 
-    @commands.command(name='skip')
+    @commands.command(name='skip', aliases=['next'])
     @commands.cooldown(5, 10, commands.BucketType.user)
     @checker()
     async def skip_(self, ctx):
@@ -591,6 +647,9 @@ class music(commands.Cog):
 
         if not player.is_connected:
             return await ctx.send('I am not currently connected to voice!')
+
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if await self.has_perms(ctx, manage_guild=True):
             await ctx.send(f'{ctx.author.mention} has skipped the song as an admin or DJ.', delete_after=25)
@@ -607,7 +666,7 @@ class music(commands.Cog):
 
         await player.stop()
 
-    @commands.command(name='stop')
+    @commands.command(name='stop', aliases=['dc', 'disconnect', 'shoo', 'begone'])
     @commands.cooldown(3, 30, commands.BucketType.guild)
     @checker()
     async def stop_(self, ctx):
@@ -617,6 +676,8 @@ class music(commands.Cog):
 
         if not player.is_connected:
             return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if await self.has_perms(ctx, manage_guild=True):
             await ctx.send(f'{ctx.author.mention} has stopped the player as an admin or DJ.', delete_after=25)
@@ -651,12 +712,14 @@ class music(commands.Cog):
 
         if not player.is_connected:
             return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if not 0 < value < 101:
             return await ctx.send('Please enter a value between 1 and 100.')
 
         if not await self.has_perms(ctx, manage_guild=True) and player.dj.id != ctx.author.id:
-            if (len(player.connected_channel.members) - 1) > 2:
+            if (len(ctx.author.voice.channel.members) - 1) > 2:
                 return
 
         await player.set_volume(value)
@@ -713,6 +776,8 @@ class music(commands.Cog):
 
         if not player.is_connected:
             return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if len(player.entries) < 3:
             return await ctx.send('Please add more songs to the queue before trying to shuffle.', delete_after=10)
@@ -725,7 +790,7 @@ class music(commands.Cog):
 
     async def do_shuffle(self, ctx):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
-        random.shuffle(player.queue._queue)
+        player.shuffle()
 
         player.update = True
 
@@ -741,7 +806,9 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         if not player.is_connected:
-            return
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if await self.has_perms(ctx, manage_guild=True):
             await ctx.send(f'{ctx.author.mention} has repeated the song as an admin or DJ.', delete_after=25)
@@ -752,12 +819,7 @@ class music(commands.Cog):
     async def do_repeat(self, ctx):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
-        if not player.entries:
-            await player.queue.put(player.current)
-        else:
-            player.queue._queue.appendleft(player.current)
-
-        player.update = True
+        player.repeat()
 
     @commands.command(name='vol_up', hidden=True)
     @checker()
@@ -768,7 +830,9 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         if not player.is_connected:
-            return
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         vol = int(math.ceil((player.volume + 10) / 10)) * 10
 
@@ -786,7 +850,9 @@ class music(commands.Cog):
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
         if not player.is_connected:
-            return
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         vol = int(math.ceil((player.volume - 10) / 10)) * 10
 
@@ -811,13 +877,29 @@ class music(commands.Cog):
         - Piano
         """
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
+        if not player.is_connected:
+            return await ctx.send('I am not currently connected to voice!')
+        if ctx.author.voice is None or ctx.author.voice.channel != ctx.guild.me.voice.channel:
+            return await ctx.send(f"You must be connected to {ctx.guild.me.voice.channel.mention} to control music!")
 
         if eq.upper() not in player.equalizers:
             return await ctx.send(f'`{eq}` - Is not a valid equalizer!\nTry Flat, Boost, Metal, Piano.')
 
-        await player.set_preq(eq)
-        player.eq = eq.capitalize()
+        await player.set_eq(player.equalizers[eq.upper()])
         await ctx.send(f'The player Equalizer was set to - {eq.capitalize()}')
+
+    @commands.command()
+    async def history(self, ctx):
+        player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
+
+        if not player.is_connected:
+            return await ctx.send('I am not currently connected to voice!')
+
+        if not player.queue.history:
+            return await ctx.send("No history!")
+
+        for track in player.queue.history:
+            track
 
     @commands.command(aliases=["wavelink", "wl", "ll"])
     @checker()
