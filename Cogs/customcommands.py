@@ -84,6 +84,16 @@ class _CustomCommands(commands.Cog):
         ctx = await self.bot.get_context(message)
         v = await self.parse(ctx, args, v)
         await message.channel.send(v)
+    
+    async def guild_commands(self, guild):
+        l = [x[0] for x in await self.db.fetchall("SELECT trigger FROM custom_commands WHERE guild_id IS ?", guild.id)]
+        if not l:
+            return None
+        ret = ""
+        for i in l:
+            ret += f"- {i}\n"
+        return ret
+
 
     @commands.group(invoke_without_command=True, aliases=['customcommands', "commands"])
     @commands.guild_only()
