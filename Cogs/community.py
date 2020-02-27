@@ -216,7 +216,10 @@ class community(commands.Cog):
         """
         def me(msg):
             return msg.author == self.bot.user
-        await ctx.channel.purge(check=me)
+        if ctx.channel.permissions_for(ctx.me).manage_messages:
+            await ctx.channel.purge(check=me)
+        else:
+            await ctx.channel.purge(check=me, bulk=False)
 
     @commands.group(usage="[subcomands]")
     @check_manager()
