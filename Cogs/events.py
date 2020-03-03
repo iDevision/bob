@@ -66,7 +66,7 @@ class _events_node(commands.Cog):
         """
         prev = await self.db.fetchrow("SELECT member_join, member_join_msg FROM events WHERE guild_id IS ?", ctx.guild.id)
         if prev is not None and message is None:
-            d = json.loads(prev[1].replace('""', '"'))
+            d = json.loads(prev[1].replace('𒆙', "'"))
             if d['embed']:
                 e = commands.Embed().from_dict(d)
                 await ctx.send(f"set to channel: <#{prev[0]}>", embed=e)
@@ -84,9 +84,9 @@ class _events_node(commands.Cog):
                 await ctx.send("`Here's an example of your welcome message:`\n"+pred)
                 pred = json.dumps({"embed": False, "text": pred})
             if prev is not None:
-                await self.db.execute("UPDATE events SET member_join_msg=? WHERE guild_id IS ?", pred.replace("'", "''"), ctx.guild.id)
+                await self.db.execute("UPDATE events SET member_join_msg=? WHERE guild_id IS ?", pred.replace("'", "𒆙"), ctx.guild.id)
             else:
-                await self.db.execute("INSERT INTO events VALUES (?,1,?,0,'')", ctx.guild.id, pred.replace("'", "''"))
+                await self.db.execute("INSERT INTO events VALUES (?,1,?,0,'')", ctx.guild.id, pred.replace("'", "𒆙"))
 
     @join.group(invoke_without_command=True)
     @checks.check_manager()
@@ -111,7 +111,7 @@ class _events_node(commands.Cog):
         await self.db.execute("UPDATE events SET member_join=? WHERE guild_id IS ?", 0, ctx.guild.id)
         await ctx.send(f"{ctx.author.mention} --> removed join channel message")
 
-    async def parser(self, ctx, message):
+    async def parser(self, ctx, message, parse_variables=True):
         message = message.replace('embed', "")
         message = message.strip()
         parser = Arguments(add_help=False, allow_abbrev=False)
@@ -133,6 +133,8 @@ class _events_node(commands.Cog):
             e.description = args.description
         if args.footer:
             e.set_footer(text=" ".join(args.footer))
+        if not parse_variables:
+            return e.to_dict()
         e2 = self.parse_embed(e.copy(), ctx.author)
         await ctx.send("Heres an example of your welcome message", embed=e2)
         d = e.to_dict()
