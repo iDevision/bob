@@ -78,7 +78,7 @@ class _events_node(commands.Cog):
 
         elif message:
             if message.startswith('embed'):
-                pred = await self.parser(ctx, message)
+                pred = await self.parser(ctx, message.replace("'", "\\'").replace('"', '\\"'))
             else:
                 pred = parse_data(message, ctx.author)
                 await ctx.send("`Here's an example of your welcome message:`\n"+pred)
@@ -122,7 +122,8 @@ class _events_node(commands.Cog):
         try:
             args = parser.parse_args(shlex.split(message))
         except Exception as e:
-            return await ctx.send(str(e))
+            await ctx.send(str(e))
+            return
         e = commands.Embed()
         if args.color:
             e.colour = await ColourConverter().convert(ctx, args.color[0])
