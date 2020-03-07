@@ -60,6 +60,8 @@ class _highlight(commands.Cog):
         await self.bot.wait_until_ready()
         for i in self.bot.guilds:
             self.cache[i.id] = await self.build_guild_cache(i)
+            if not self.cache[i.id]:
+                del self.cache[i.id]
 
     async def build_guild_cache(self, guild: commands.Guild):
         hl = await self.db.fetchall("SELECT user_id, word FROM highlights WHERE guild_id IS ?", guild.id)
@@ -90,6 +92,8 @@ class _highlight(commands.Cog):
         h = []
         for i in hl:
             h.append(i[0])
+        if member.guild.id not in self.cache:
+            self.cache[member.guild.id] = {}
         if not h:
             if member.id in self.cache[guild.id]:
                 del self.cache[guild.id][member.id]
@@ -101,10 +105,12 @@ class _highlight(commands.Cog):
         if not msg.guild or msg.author.bot or msg.guild.id not in self.cache: return
         highlighted = []
         for mid, m in self.cache[msg.guild.id].items():
-            if (msg.author, 0) in m[1] or (msg.channel.id, 1) in m[1]:
-                continue
+            if mid in highlighted: continue
+            if msg.channel.id in [x[0] for x in m[1] if x[1] is 1]: continue
+            if msg.author.id in [x[0] for x in m[1] if x[1] is 0]: continue
             v = m[0].search(msg.content)
             if v:
+                highlighted.append(mid)
                 self.bot.loop.create_task(self.do_highlight(msg, msg.guild.get_member(mid), v.group()))
 
     @commands.group(invoke_without_command=True, aliases=["hl"])
@@ -123,7 +129,7 @@ class _highlight(commands.Cog):
     @highlight.command()
     @commands.guild_only()
     @commands.check_module("highlight")
-    async def add(self, ctx, word):
+    async def add(self, ctx, word: commands.clean_content(escape_markdown=True, fix_channel_mentions=True)):
         """
         add a word to trigger highlights
         """
@@ -142,12 +148,14 @@ class _highlight(commands.Cog):
         """
         await self.db.execute("DELETE FROM highlights WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
         await self.db.execute("DELETE FROM hl_blocks WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
+        if ctx.guild.id in self.cache and ctx.author.id in self.cache[ctx.guild.id]:
+            del self.cache[ctx.guild.id][ctx.author.id]
         await ctx.send("cleared your highlight triggers and blocks")
 
     @highlight.command()
     @commands.guild_only()
     @commands.check_module("highlight")
-    async def remove(self, ctx, word):
+    async def remove(self, ctx, word: commands.clean_content(escape_markdown=True, fix_channel_mentions=True)):
         """
         remove a word from your highlights
         """
@@ -188,7 +196,7 @@ class _highlight(commands.Cog):
         """
         if isinstance(guild, str):
             for i in self.bot.guilds:
-                if i.name.lower() == guild:
+                if i.name.lower() == guild.lower():
                     guild = i
                     break
             if isinstance(guild, str):
