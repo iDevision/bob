@@ -13,7 +13,7 @@ def setup(bot):
 
 
 class TagName(commands.clean_content):
-    def __init__(self, *, lower=False):
+    def __init__(self, *, lower=True):
         self.lower = lower
         super().__init__()
 
@@ -49,12 +49,18 @@ async def has_tag_edit_perm(c, ctx, tag):
 
 
 class _tags(commands.Cog):
-    category="tags"
     def __init__(self, bot):
         self.bot = bot
         self.db = db.Database("tags")
 
-    @commands.group(aliases=["tags"], invoke_without_command=True)
+    @commands.command()
+    @commands.guild_only()
+    @check_module("tags")
+    async def tags(self, ctx, user: commands.Member=None):
+        await self.list.can_run(ctx)
+        await self.list(ctx, user)
+
+    @commands.group(invoke_without_command=True)
     @commands.guild_only()
     @check_module('tags')
     async def tag(self, ctx: commands.Context, *, searchtag: TagName = None):
@@ -87,10 +93,19 @@ class _tags(commands.Cog):
     @tag.command()
     @commands.guild_only()
     @check_module('tags')
-    async def list(self, ctx):
-        tags = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ?", ctx.guild.id)
-        v = [t[0] for t in tags]
-        await ctx.paginate(v)
+    async def list(self, ctx, user: commands.Member=None):
+        if user is None:
+            tags = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ?", ctx.guild.id)
+            v = [t[0] for t in tags]
+            await ctx.paginate(v)
+
+        else:
+            tags = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ? AND owner IS ?", ctx.guild.id, user.id)
+            if not tags:
+                return await ctx.send(f"{user} has no tags!")
+
+            v = [t[0] for t in tags]
+            await ctx.paginate(v, )
 
     @tag.command(aliases=["add", "make"], usage="<name> [response]")
     @commands.guild_only()
@@ -154,11 +169,13 @@ class _tags(commands.Cog):
         allows you to edit a tag you own.
         """
         if not resp:
-            return await ctx.send(f"{ctx.author.mention} --> no content to edit with")
+            return await ctx.send(f"No content to edit with")
         v = await self.db.fetchrow("SELECT * FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
         if v and await has_tag_edit_perm(self, ctx, name):
-            await self.bot.db.execute("UPDATE tags VALUES SET response=? WHERE guild_id IS ? AND name=?", (resp, ctx.guild.id, name))
-            await ctx.send(f"{ctx.author.mention} --> updated tag `{name}`")
+            await self.db.execute("UPDATE tags SET response=? WHERE guild_id IS ? AND name=?", resp, ctx.guild.id, name)
+            await ctx.send(f"Updated tag `{name}`")
+        else:
+            await ctx.send("Tag does not exist or you do not have permission to edit it.")
 
     @tag.command(usage="<tag name>")
     @commands.guild_only()
