@@ -1,34 +1,33 @@
 from utils import commands
 import random
+import json
 
 def setup(bot):
     bot.add_cog(Bull(bot))
 
 class Bull(commands.Cog):
+    hidden = True
     def __init__(self, bot):
         self.bot = bot
         self.ban_messages = [
             "$u, you must serve your sentence. $m",
             "$u, did you really think you would escape consequences? $m",
-            "$u, the thou shalt not pass anymore! $m"
+            "$u, the thou shalt not pass anymore! $m",
+            "nuh uh, I don't think so $u. $m"
         ]
-        self.mention_messages = [
-            "Yes?\n$m",
-            "\*Lurks intently\*\n$m",
-            "Can I help you?\n$m",
-            "\U0001f693\n$m",
-            "<:cctv:587262240688701440>\n$m",
-            "<:typing:585888124761276416>\n$m",
-            "<:ping:655484718225293368>\n$m",
-            "<a:whomstve_ping_me:668320147366346774>\n$m",
-            "how make i say computer \"hi\"?\n$m",
-            "Woah, we're halfway there\nWoah-oh, livin' on a prayer\nTake my hand, we'll make it I swear\nWoah-oh, livin' on a prayer, livin' on a prayer\n$m",
-            "\*sings 'Through the fire and the flames'\*\n$m",
-            "APPLICATION DATA AFTER CLOSE NOTIFY\n$m",
-            "Noobmaster, hey it’s Thor again. You know, the god of thunder? Listen buddy, if you don’t log off this game "
-            "immediately I will fly over to your house, and come down to that basement you’re hiding in and rip off your "
-            "arms and shove them up your butt! Oh, that’s right, yea just go cry to your father you little weasel.\n$m"
-        ]
+        with open("data/bullshit.json") as f:
+            self.mention_messages = json.load(f)
+
+    @commands.command()
+    @commands.is_owner()
+    async def add_mention(self, ctx, *, entry):
+        entry += "\n$m"
+        self.mention_messages.append(entry)
+        with open("../bobbeta/data/bullshit.json", "w") as f: # can run from either bot
+            json.dump(self.mention_messages, f)
+        with open("../bob2/data/bullshit.json", "w") as f:
+            json.dump(self.mention_messages, f)
+        await ctx.send("Done")
 
     async def run_ping(self, ctx):
         await ctx.send(random.choice(self.mention_messages).replace("$m", f"\n*Your server's prefix is `{ctx.bot.guild_prefixes[ctx.guild.id]}`*"))
