@@ -11,7 +11,43 @@ from utils.checks import *
 
 
 def setup(bot):
-    bot.add_cog(Currency(bot))
+    bot.add_cog(BasicCurrency(bot))
+
+
+class BasicCurrency(commands.Cog, name="Currency2"):
+    category = "currency"
+    def __init__(self, bot):
+        self.bot = bot
+        self.activities = commands.CooldownMapping.from_cooldown(5, 900, commands.BucketType.member)
+        self.activity_loop.start()
+
+    def cog_unload(self):
+        self.activity_loop.cancel()
+
+    @commands.Cog.listener()
+    async def on_message(self, msg):
+        self.activities.update_rate_limit(msg)
+
+    @tasks.loop(minutes=5)
+    async def activity_loop(self):
+        local_edits = []
+        self.activities._verify_cache_integrity()
+        for key, bucket in self.activities._cache.items():
+            if bucket._tokens <= 0:
+                local_edits.append((key[0], key[1]))
+        if local_edits:
+            await self.bot.pg.executemany("INSERT INTO talking_stats VALUES ($1,$2,1) ON CONFLICT (guild_id, user_id) DO UPDATE SET messages = talking_stats.messages + 1;", local_edits)
+    
+    @commands.command()
+    async def activity(self, ctx, target: commands.Member = None):
+        """
+        shows a user's activity on the server. every 5 minutes of activity gives 1 activity point
+        """
+        target = target or ctx.author
+        data = await self.bot.pg.fetchrow("SELECT messages FROM talking_stats WHERE guild_id = $1 AND user_id = $2;", ctx.guild.id, target.id)
+        if not data:
+            return await ctx.send("No data for this user")
+        await ctx.send(f"{target} has {data['messages']} activity points")
 
 class Currency(commands.Cog, name="points"):
     category = "currency"
