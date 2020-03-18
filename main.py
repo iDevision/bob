@@ -111,6 +111,7 @@ class Bot(commands.Bot):
         self.run_solo = False
         self.counter = 0
         self.version = "unloaded"
+        self.pg = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresdsn'])) #type: asyncpg.pool.Pool
         self.setup = False
         commands.Bot.__init__(self, prefix, help_command, description=description, **settings)
         self.__cogs = _CaseInsensitiveDict()
