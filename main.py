@@ -21,6 +21,7 @@ import collections
 import datetime
 import json
 import os
+import asyncpg
 import sys
 import time
 import traceback
