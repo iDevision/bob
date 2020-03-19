@@ -18,7 +18,7 @@ class BasicCurrency(commands.Cog, name="Currency2"):
     category = "currency"
     def __init__(self, bot):
         self.bot = bot
-        self.activities = commands.CooldownMapping.from_cooldown(5, 900, commands.BucketType.member)
+        self.activities = commands.CooldownMapping.from_cooldown(5, 300, commands.BucketType.member)
         self.activity_loop.start()
 
     def cog_unload(self):
