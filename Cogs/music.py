@@ -359,7 +359,7 @@ class music(commands.Cog):
                           'port': v['port'],
                           'rest_url': f"http://{v['host']}:{v['port']}",
                           'password': v['password'],
-                          'identifier': self.bot.settings['music_node'],
+                          'identifier': v['ident'],
                           'region': 'us_central'} for key, v in self.bot.settings['lavalink_nodes'].items()}
 
         for n in nodes.values():
