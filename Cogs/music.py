@@ -354,7 +354,7 @@ class music(commands.Cog):
 
         bot.loop.create_task(self.initiate_nodes())
 
-        async def initiate_nodes(self):
+    async def initiate_nodes(self):
         nodes = {key: {'host': v['host'],
                           'port': v['port'],
                           'rest_url': f"http://{v['host']}:{v['port']}",
