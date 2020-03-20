@@ -354,13 +354,13 @@ class music(commands.Cog):
 
         bot.loop.create_task(self.initiate_nodes())
 
-    async def initiate_nodes(self):
-        nodes = {'MAIN': {'host': '127.0.0.1',
-                          'port': 8081,
-                          'rest_url': 'http://127.0.0.1:8081',
-                          'password': "BOBTHEBUILDER", # no i dont really care, the ports are all closed anyways
+        async def initiate_nodes(self):
+        nodes = {key: {'host': v['host'],
+                          'port': v['port'],
+                          'rest_url': f"http://{v['host']}:{v['port']}",
+                          'password': v['password'],
                           'identifier': self.bot.settings['music_node'],
-                          'region': 'us_central'}}
+                          'region': 'us_central'} for key, v in self.bot.settings['lavalink_nodes'].items()}
 
         for n in nodes.values():
             try:
