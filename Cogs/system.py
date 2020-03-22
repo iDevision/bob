@@ -402,6 +402,8 @@ class MyCog(commands.Cog):
         await self.bot.db.execute("INSERT INTO module_states VALUES (?, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)", guild.id)
         await self.bot.db.execute("INSERT INTO roles VALUES (?, 0, 0, 0, 0, 0)", guild.id)
         self.bot.guild_prefixes[guild.id] = "!" if self.bot.run_bot != "BOB_ALPHA" else "]"
+        self.bot.guild_role_states[guild.id] = {"editor": None, "muted": None, "moderator": None, "manager": None,
+                                            "streamer": None}
         self.bot.guild_module_states[guild.id] = {"moderation": True, "quotes": True, "automod": True,
                                                           "modlogs": True,
                                                           "community": True, "fun": True, "music": True,
