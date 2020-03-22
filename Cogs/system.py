@@ -390,7 +390,7 @@ class MyCog(commands.Cog):
             return
         robj = []
         for role in roles:
-            v = guild.get_role(role)
+            v = guild.get_role(role[0])
             if not v:
                 continue
             robj.append(v)
