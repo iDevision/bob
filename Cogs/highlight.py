@@ -102,12 +102,19 @@ class _highlight(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, msg: commands.Message):
-        if not msg.guild or msg.author.bot or msg.guild.id not in self.cache: return
+        if not msg.guild or msg.author.bot or msg.guild.id not in self.cache:
+            return
         highlighted = []
         for mid, m in self.cache[msg.guild.id].items():
-            if mid in highlighted: continue
-            if msg.channel.id in [x[0] for x in m[1] if x[1] is 1]: continue
-            if msg.author.id in [x[0] for x in m[1] if x[1] is 0]: continue
+            if mid in highlighted or not m['words']:
+                continue
+
+            if msg.channel.id in [x[0] for x in m[1] if x[1] is 1]:
+                continue
+
+            if msg.author.id in [x[0] for x in m[1] if x[1] is 0]:
+                continue
+
             v = m[0].search(msg.content)
             if v:
                 highlighted.append(mid)
