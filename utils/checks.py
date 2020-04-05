@@ -69,18 +69,14 @@ def check_moderator():
             return True
         if ctx.author.guild_permissions.administrator:
             return True
-        cur = ctx.bot.db.cursor()
-        cur.execute("SELECT moderator FROM roles WHERE guild_id IS ?", (ctx.guild.id,))
-        v = (cur.fetchone())[0]
-        role = ctx.guild.get_role(v)
-        cur.execute("SELECT editor FROM roles WHERE guild_id IS ?", (ctx.guild.id,))
-        higherrole = ctx.guild.get_role((cur.fetchone())[0])
+        role = ctx.guild.get_role(ctx.bot.guild_role_states[ctx.guild.id]['moderator'])
+        higherrole = ctx.guild.get_role(ctx.bot.guild_role_states[ctx.guild.id]['editor'])
         if not role:
-            raise RoleDoesNotExist(f"the role id `{role}` does not exist in your guild. "
-            "The role may have been deleted, or no role was ever created/assigned.")
+            raise RoleDoesNotExist(f"The Moderator role could not be found. Are you sure you have a role set up for that?")
         if role not in ctx.author.roles and higherrole not in ctx.author.roles:
             raise MissingRequiredRole(f"You need the `Moderator` role ({role.name}) or higher to use this command")
         return True
+    
     return commands.check(check)
 
 
