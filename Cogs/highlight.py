@@ -79,6 +79,8 @@ class _highlight(commands.Cog):
             else:
                 din[uid] = {"words": [], "blocks": [(cmid, mc)]}
         for uid, v in din.items():
+            if not v['words']:
+                continue
             dout[uid] = (self.build_re(v['words']), v['blocks'])
         return dout
 
@@ -98,6 +100,7 @@ class _highlight(commands.Cog):
             if member.id in self.cache[guild.id]:
                 del self.cache[guild.id][member.id]
             return
+        
         self.cache[guild.id][member.id] = (self.build_re(h), b)
 
     @commands.Cog.listener()
