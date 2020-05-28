@@ -251,6 +251,52 @@ class LoggingFlags:
     def emojis_update(self):
         return 1 << 14
 
+def load_modules(record):
+    flags = record['flags']
+    def _i(flag):
+        return bool(int(flag))
+    v = {
+        "moderation": _i(flags[0]),
+        "quotes": _i(flags[1]),
+        "automod": _i(flags[2]),
+        "modlogs": _i(flags[3]),
+        "community": _i(flags[4]),
+        "fun": _i(flags[5]),
+        "music": _i(flags[6]),
+        "autoresponder": _i(flags[7]),
+        "misc": _i(flags[8]),
+        "events": _i(flags[9]),
+        "currency": _i(flags[10]),
+        "modmail": _i(flags[11]),
+        "basics": _i(flags[12]),
+        "commands": _i(flags[13]),
+        "tags": _i(flags[14]),
+        "highlight": _i(flags[15])
+    }
+    return v
+
+def save_modules(d, default=True):
+    resp = ""
+    def _i(mod):
+        return str(int(d.get(mod, default)))
+    resp += _i("moderation")
+    resp += _i("quotes")
+    resp += _i("automod")
+    resp += _i("modlogs")
+    resp += _i("community")
+    resp += _i("fun")
+    resp += _i("music")
+    resp += _i("autoresponder")
+    resp += _i("misc")
+    resp += _i("events")
+    resp += _i("currency")
+    resp += _i("modmail")
+    resp += _i("basics")
+    resp += _i("commands")
+    resp += _i("tags")
+    resp += _i("moderation")
+    resp += _i("highlight")
+    return resp
 
 class Track(wavelink.Track):
     __slots__ = ('requester', 'channel', 'message')

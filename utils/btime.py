@@ -178,7 +178,7 @@ class UserFriendlyTime(commands.Converter):
             print(elements[0])
             dt, status, begin, end, dt_string = elements[0]
 
-            self.dt =  dt
+            self.dt = dt + datetime.timedelta(seconds=1)
 
             if begin in (0, 1):
                 if begin == 1:

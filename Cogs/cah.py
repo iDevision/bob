@@ -3,6 +3,7 @@ import json
 import os
 import random
 import time
+import asyncio
 
 import discord
 
@@ -11,9 +12,7 @@ from utils import checks
 from utils import commands
 
 cahdecks = os.path.join(runtimeinfo.INSTALL_DIR, "data", "cahdecks")
-available_decks = {"Base Deck": "base", "First Expansion": "expansion1", "Second Expansion": "expansion2",
-                   "Third Expansion": "expansion3", "Fourth Expansion": "expansion4", "Fifth Expansion": "expansion5",
-                   "Sixth Expansion": "expansion6", "MegaPack": "largedeck"}
+available_decks = {"MegaPack": "largedeck"}
 def setup(bot):
     bot.add_cog(cah(bot))
 
@@ -31,6 +30,7 @@ class Deck:
             self.usable['blackCards'].remove(c)
             if c['pick'] <= 2:
                 break
+        c['text'] = c['text'].replace("<i>", "*").replace("<\\i>", "*").replace("_", "\\_").replace("<b>", "**").replace("<\\b>", "**")
         return c['text'], c['pick']
 
     def get_white_card(self)->str:
@@ -54,7 +54,7 @@ class Hand:
         for i in self.slots:
             self.slots[i] = self.deck.get_white_card()
 
-    async def card_used(self,msg: discord.Message, num: int, num2:int=None):
+    async def card_used(self, msg: discord.Message, num: int, num2:int=None):
         if num not in self.slots or num2 not in self.slots:
             return None, discord.Embed(title="Invalid Card!", color=discord.Color.red())
 
@@ -69,6 +69,7 @@ class Hand:
     async def format_hand(self):
         e = discord.Embed(title="**Your Hand**", color=discord.Color.teal())
         e.set_author(name=self.user.name, icon_url=self.user.avatar_url)
+        e.set_author(name="pick your selections with `pick` (no prefix)")
         v = ""
         for n, i in self.slots.items():
             v += f"#{n} - {i}\n"
@@ -80,12 +81,12 @@ class cah(commands.Cog):
     allows for some good ol' games of Cards Against Humanity.
     """
     category = "fun"
-    walk_on_help = True
     def __init__(self, bot):
         self.bot = bot
         self.group = "Fun"
         self.games = {}  # we are not storing games in a database. fuck that.
         self.users_in_games = {}  # to ensure users are only in one game at a time
+        self.spam_bucket = commands.CooldownMapping.from_cooldown(1,2,commands.BucketType.user)
 
     def cog_check(self, ctx):
         if ctx.guild is None:
@@ -102,8 +103,10 @@ class cah(commands.Cog):
     async def on_message(self, msg):
         if msg.guild is not None or msg.author.id not in self.users_in_games:
             return
-        if msg.content.startswith("!") or msg.content.startswith("?"):
+        if (await self.bot.get_context(msg)).command is not None:
             return
+        if self.spam_bucket.update_rate_limit(msg):
+            await msg.author.send("You are sending messages too quickly")
         await self.broadcast_user_msg(msg)
 
     async def broadcast_user_msg(self, msg: discord.Message):
@@ -116,11 +119,15 @@ class cah(commands.Cog):
             # im hoping that people dont send non-pictures...
             e.set_image(url=msg.attachments[0].url)
         for user in users.keys():
+            if user.id == msg.author.id:
+                continue
             await user.send(embed=e)
 
-    async def broadcast_system_msg(self, game, embed):
+    async def broadcast_system_msg(self, game, embed, source=None):
         embed = await self.format_embed(game, embed)
         for user in game['users'].keys():
+            if source == user:
+                continue
             await user.send(embed=embed)
 
     async def broadcast_tzar_msg(self, game, tzar, blackcard, pick):
@@ -153,12 +160,12 @@ class cah(commands.Cog):
         self.users_in_games[ctx.author.id] = gamenum
         self.games[gamenum] = game = {"users": {}, "deck": Deck("largedeck"), "blackcard": None, "tzar": None, "id": gamenum,
                                       "entries": {}, "blacksels": 0, "order": [], "index": -1, "pickable": False, "choosable": False,
-                                      "running": False}
+                                      "running": False, "host": ctx.author}
         game['users'][ctx.author] = {"hand": Hand(ctx.author, game['deck'])}
         game['order'].append(ctx.author)
 
         await self.broadcast_system_msg(game, discord.Embed(title="Waiting for players (1/3)", description="Use `!help cah` to find the playing commands!"))
-        await ctx.send(f"created new cards against humanity game with id `{gamenum}`\nEveryone can join with `{ctx.invoked_with}cah join {gamenum}` !")
+        await ctx.send(f"created new cards against humanity game with id `{gamenum}`\nEveryone can join with `{ctx.prefix}cah join {gamenum}` !")
 
     @cah_new_game.command()
     async def join(self, ctx, gamenum: int):
@@ -167,26 +174,32 @@ class cah(commands.Cog):
         """
         if not gamenum in self.games:
             return await ctx.send("That game does not exist!")
+        if ctx.author in self.games[gamenum]['users']:
+            return await ctx.send("|:|")
         self.games[gamenum]['users'][ctx.author] = {"hand": Hand(ctx.author, self.games[gamenum]['deck'])}
-        self.bot.dispatch("cah_user_join", ctx.author, self.games[gamenum])
-
+        self.users_in_games[ctx.author.id] = gamenum
+        game = self.games[gamenum]
+        e = await self.format_embed(game, None)
+        e.colour = discord.Color.green()
+        e.title = f"User Joined!"
+        e.description = f"{ctx.author}\n*(reminder: commands have no prefix. host, use `start` to start the game when ready)"
+        await self.broadcast_system_msg(game, e)
 
     @commands.Cog.listener()
     async def on_cah_user_join(self, user, game):
         e = await self.format_embed(game, None)
         e.colour = discord.Color.green()
-        if len(game['users']) <= 3:
+        if len(game['users']) < 2:
             e.title = f"User Joined! ({len(game['users'])}/3)"
         else:
             e.title = f"User Joined!"
         e.description = str(user)
         await self.broadcast_system_msg(game, e)
-        if len(game['users']) >= 3 and not game['running']:
-            game['running'] = True
-            await self.rotate(game)
 
     async def rotate(self, game):
         # the game positioning, message sending, etc will happen here
+        game['entries'] = {}
+        game['choosable'] = False
         index = game['index']
         if index+1 >= len(game['order']):
             index = 0
@@ -195,12 +208,14 @@ class cah(commands.Cog):
         tzar = game['order'][index]
         game['tzar'] = tzar
         blackcard, picks = game['deck'].get_black_card()
+        game['blackcard'] = blackcard
+        game['blacksels'] = picks
         await self.broadcast_tzar_msg(game, tzar, blackcard, picks)
         for user in game['users']:
             if user == tzar:
                 continue
-            await user.send(embed=await game[user]['hand'].format_hand())
-
+            await user.send(embed=await game['users'][user]['hand'].format_hand())
+        game['pickable'] = True
 
     @commands.command(usage="<choices>")
     @commands.dm_only()
@@ -214,20 +229,34 @@ class cah(commands.Cog):
         """
         if ctx.author.id not in self.users_in_games:
             return await ctx.send("you are not in a CAH game!")
+
         game = self.games[self.users_in_games[ctx.author.id]]
+
         if game['tzar'] == ctx.author:
+            if not game['choosable']:
+                return await ctx.send("You must wait until all players have picked their cards!")
+
             return await self.choose(ctx, num)
-        if num not in range(1, 10):
+
+        if not game['pickable'] or ctx.author in game['entries']:
+            return await ctx.send("you may not pick cards right now")
+
+        if not (0 < num < 11):
             return await ctx.send("Invalid Choice!")
 
         if game['blacksels'] == 2 and not num2:
             return await ctx.send("You need to pick 2 cards!")
+
         if game['blacksels'] == 1 and num2 is not None:
             return await ctx.send("Too many card selections!")
+
+        await ctx.send("1")
+
         cards, embed = await game['users'][ctx.author]['hand'].card_used(ctx, num, num2)
         if embed is not None:
             embed = self.format_embed(game, embed)
             return await ctx.send(embed=embed)
+        await ctx.send("2")
         e = await self.format_embed(game, None)
         e.color = discord.Color.magenta()
         e.title = "You chose"
@@ -237,7 +266,9 @@ class cah(commands.Cog):
             e.description = f"`{cards}`"
         game['entries'][ctx.author] = cards
         await ctx.send(embed=e)
-        if len(game['entries']) >= len(game['users']-1):
+        if len(game['entries']) >= len(game['users'])-1:
+            game['pickable'] = False
+            game['choosable'] = True
             await self.tzar_turn(game)
     pick.brief = "See `!help cah pick`"
 
@@ -260,9 +291,9 @@ class cah(commands.Cog):
         game = self.games[self.users_in_games[ctx.author.id]]
         if ctx.author != game['tzar']:
             return await ctx.send("You're not the card Tzar!")
-        if num not in range(1, len(game['entries'])):
-            return await ctx.send("Invalid choice!")
-        for i, user in enumerate(game['entries']):
+        if not (0 < num < 11):
+            return await ctx.send("Invalid Choice!")
+        for i, user in enumerate(game['entries'], start=1):
             if i == num:
                 embed = await self.format_embed(game, None)
                 embed.color = discord.Color.green()
@@ -279,6 +310,8 @@ class cah(commands.Cog):
                 e.add_field(name=str(v), value=entries, inline=False)
             v += 1
         await self.broadcast_system_msg(game, e)
+        await asyncio.sleep(4)
+        await self.rotate(game)
 
     @cah_new_game.command()
     @commands.dm_only()
@@ -295,3 +328,18 @@ class cah(commands.Cog):
             del self.games[gamenum]  # the game is over
             return
         await self.broadcast_system_msg(self.games[gamenum], e)
+
+    @commands.command()
+    @commands.dm_only()
+    async def start(self, ctx):
+        if not ctx.author.id in self.users_in_games:
+            return await ctx.send("You're not in a CAH game!")
+
+        gamenum = self.users_in_games[ctx.author.id]
+        game = self.games[gamenum]
+        if game['host'].id != ctx.author.id:
+            return await ctx.send("You are not this games host")
+
+        game['running'] = True
+
+        await self.rotate(self.games[gamenum])

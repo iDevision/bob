@@ -12,7 +12,7 @@ def setup(bot):
 class _highlight(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = bot.db
+        self.db = bot.pg
         self.cache = bot.highlight_cache
         self.bot.loop.create_task(self.build_full_cache())
 
@@ -58,58 +58,95 @@ class _highlight(commands.Cog):
 
     async def build_full_cache(self):
         await self.bot.wait_until_ready()
+        conn = await self.db.acquire()
         for i in self.bot.guilds:
-            self.cache[i.id] = await self.build_guild_cache(i)
+            self.cache[i.id] = await self.build_guild_cache(i, conn=conn)
             if not self.cache[i.id]:
                 del self.cache[i.id]
 
-    async def build_guild_cache(self, guild: commands.Guild):
-        hl = await self.db.fetchall("SELECT user_id, word FROM highlights WHERE guild_id IS ?", guild.id)
-        blocks = await self.db.fetchall("SELECT user_id, rcid, rc FROM hl_blocks WHERE guild_id IS ?", guild.id)
+    async def build_guild_cache(self, guild: commands.Guild, conn=None):
+        if conn is None:
+            connection = await self.db.acquire()
+        else:
+            connection = conn
+
+        hl = await connection.fetch("SELECT user_id, word FROM highlights WHERE guild_id = $1", guild.id)
+        blocks = await connection.fetch("SELECT user_id, rcid, rc FROM hl_blocks WHERE guild_id = $1", guild.id)
+
+        if conn is None:
+            await self.db.release(connection)
+
         din = {}
         dout = {}
-        for uid, word in hl:
+        for rec in hl:
+            uid = rec['user_id']
+            word = rec['word']
             if uid in din:
                 din[uid]['words'].append(word)
             else:
                 din[uid] = {"words": [word], "blocks": []}
-        for uid, cmid, mc in blocks:
+
+        for rec in blocks:
+            uid = rec['user_id']
+            cmid = rec['rcid']
+            mc = rec['rc']
             if uid in din:
                 din[uid]['blocks'].append((cmid, mc))
             else:
                 din[uid] = {"words": [], "blocks": [(cmid, mc)]}
+
         for uid, v in din.items():
             if not v['words']:
                 continue
+
             dout[uid] = (self.build_re(v['words']), v['blocks'])
+
         return dout
 
-    async def rebuild_single_cache(self, member:commands.Member):
+    async def rebuild_single_cache(self, member:commands.Member, conn=None):
         guild = member.guild
-        hl = await self.db.fetchall("SELECT word FROM highlights WHERE guild_id IS ? AND user_id IS ?", guild.id, member.id)
-        blocks = await self.db.fetchall("SELECT rcid, rc FROM hl_blocks WHERE guild_id IS ? AND user_id IS ?", guild.id, member.id)
+        if conn is None:
+            connection = await self.db.acquire()
+        else:
+            connection = conn
+
+        hl = await connection.fetch("SELECT word FROM highlights WHERE guild_id = $1 AND user_id = $2", guild.id, member.id)
+        blocks = await connection.fetch("SELECT rcid, rc FROM hl_blocks WHERE guild_id = $1 AND user_id = $2", guild.id, member.id)
+
+        if conn is None:
+            await self.db.release(connection)
+
         b = []
         for i in blocks:
-            b.append((i[0], i[1]))
+            b.append((i['rcid'], i['rc']))
+
         h = []
         for i in hl:
-            h.append(i[0])
+            h.append(i['word'])
+
+        if not h:
+            if member.id in self.cache[member.guild.id]:
+                del self.cache[member.guild.id][member.id]
+
         if member.guild.id not in self.cache:
             self.cache[member.guild.id] = {}
+
         if not h:
             if member.id in self.cache[guild.id]:
                 del self.cache[guild.id][member.id]
+
             return
-        
+
         self.cache[guild.id][member.id] = (self.build_re(h), b)
 
     @commands.Cog.listener()
     async def on_message(self, msg: commands.Message):
         if not msg.guild or msg.author.bot or msg.guild.id not in self.cache:
             return
+
         highlighted = []
         for mid, m in self.cache[msg.guild.id].items():
-            if mid in highlighted or not m['words']:
+            if mid in highlighted:
                 continue
 
             if msg.channel.id in [x[0] for x in m[1] if x[1] is 1]:
@@ -145,7 +182,15 @@ class _highlight(commands.Cog):
         """
         if len(word) < 3:
             return await ctx.send("Word is too small")
-        await self.db.execute("INSERT INTO highlights VALUES (?,?,?)", ctx.guild.id, ctx.author.id, word)
+
+        async with self.db.acquire() as conn:
+            existing = await conn.fetch("SELECT * FROM highlights WHERE guild_id = $1 AND user_id = $2;", ctx.guild.id, ctx.author.id)
+            if len(existing) >= 10:
+                await ctx.send("You have too many word on highlight")
+
+            else:
+                await conn.execute("INSERT INTO highlights VALUES ($1,$2,$3);", ctx.guild.id, ctx.author.id, word)
+
         await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"added `{word}` to your highlight triggers")
 
@@ -156,10 +201,13 @@ class _highlight(commands.Cog):
         """
         clears your highlight triggers and blocks. this is not reversible
         """
-        await self.db.execute("DELETE FROM highlights WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
-        await self.db.execute("DELETE FROM hl_blocks WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
+        async with self.db.acquire() as conn:
+            await conn.execute("DELETE FROM highlights WHERE guild_id = $1 AND user_id = $2;", ctx.guild.id, ctx.author.id)
+            await conn.execute("DELETE FROM hl_blocks WHERE guild_id = $1 AND user_id $2;", ctx.guild.id, ctx.author.id)
+
         if ctx.guild.id in self.cache and ctx.author.id in self.cache[ctx.guild.id]:
             del self.cache[ctx.guild.id][ctx.author.id]
+
         await ctx.send("cleared your highlight triggers and blocks")
 
     @highlight.command()
@@ -169,8 +217,10 @@ class _highlight(commands.Cog):
         """
         remove a word from your highlights
         """
-        await self.db.execute("DELETE FROM highlights WHERE guild_id IS ? AND user_id IS ? AND word IS ?", ctx.guild.id, ctx.author.id, word)
-        await self.rebuild_single_cache(ctx.author)
+        async with self.db.acquire() as conn:
+            await conn.execute("DELETE FROM highlights WHERE guild_id = $1 AND user_id = $2 AND word = $3;", ctx.guild.id, ctx.author.id, word)
+            await self.rebuild_single_cache(ctx.author, conn=conn)
+
         await ctx.send(f"Updated your highlight triggers")
 
     @highlight.command()
@@ -180,8 +230,10 @@ class _highlight(commands.Cog):
         """
         block a user or a channel from triggering highlights for you
         """
-        await self.db.execute("INSERT INTO hl_blocks VALUES (?,?,?,?)", ctx.guild.id, ctx.author.id, channel_or_person.id, 0 if isinstance(channel_or_person, commands.User) else 1)
-        await self.rebuild_single_cache(ctx.author)
+        async with self.db.acquire() as conn:
+            await conn.execute("INSERT INTO hl_blocks VALUES ($1,$2,$3,$4);", ctx.guild.id, ctx.author.id, channel_or_person.id, 0 if isinstance(channel_or_person, commands.User) else 1)
+            await self.rebuild_single_cache(ctx.author, conn=conn)
+
         await ctx.send(f"added {channel_or_person} to your block list")
 
     @highlight.command()
@@ -191,11 +243,11 @@ class _highlight(commands.Cog):
         """
         unblocks a user or channel from your highlights, allowing the pings to flow free once again
         """
-        await self.db.execute("DELETE FROM hl_blocks WHERE guild_id IS ? AND user_id IS ? AND rcid IS ?", ctx.guild.id, ctx.author.id, channel_or_person.id)
+        await self.db.execute("DELETE FROM hl_blocks WHERE guild_id = $1 AND user_id = $2 AND rcid = $3;", ctx.guild.id, ctx.author.id, channel_or_person.id)
         await self.rebuild_single_cache(ctx.author)
         await ctx.send(f"updated your block list")
 
-    @highlight.command()
+    @highlight.command(aliases=['import'])
     @commands.guild_only()
     @commands.cooldown(1, 60, commands.BucketType.user)
     @commands.check_module("highlight")
@@ -209,16 +261,20 @@ class _highlight(commands.Cog):
                 if i.name.lower() == guild.lower():
                     guild = i
                     break
+
             if isinstance(guild, str):
                 return await ctx.send("Server not found")
+
         else:
             guild = self.bot.get_guild(guild)
 
-        v = await self.db.fetchall("SELECT word FROM highlights WHERE guild_id IS ? AND user_id IS ?", guild.id, ctx.author.id)
+        v = await self.db.fetch("SELECT word FROM highlights WHERE guild_id = $1 AND user_id = $2", guild.id, ctx.author.id)
         if not v:
             return await ctx.send("You have no highlight words in that server!")
-        v = [(ctx.guild.id, ctx.author.id, s[0]) for s in v]
-        await self.db.executemany("INSERT INTO highlights VALUES (?,?,?)", v)
+
+        v = [(ctx.guild.id, ctx.author.id, record['word']) for record in v]
+
+        await self.db.executemany("INSERT INTO highlights VALUES ($1,$2,$3);", v)
         await ctx.send("Imported highlight triggers from "+guild.name)
 
     @highlight.command(aliases=['list'])
@@ -228,10 +284,11 @@ class _highlight(commands.Cog):
         """
         shows your highlight triggers from this server
         """
-        v = await self.db.fetchall("SELECT word FROM highlights WHERE guild_id IS ? AND user_id IS ?", ctx.guild.id, ctx.author.id)
+        v = await self.db.fetch("SELECT word FROM highlights WHERE guild_id = $1 AND user_id = $2", ctx.guild.id, ctx.author.id)
         if not v:
             return await ctx.send("You have no highlight triggers set up!")
         r = ""
-        for i in v:
-            r += i[0]+"\n"
+        for record in v:
+            r += record['word']+"\n"
+
         await ctx.send(embed=ctx.embed_invis(description=r))

@@ -1,7 +1,8 @@
 import re
-import datetime, time
+import datetime
 import discord
-from utils import btime, commands, objects
+from utils import commands, objects
+import yarl
 
 CAPS = re.compile(r"[ABCDEFGHIJKLMNOPQRSTUVWXYZ]")
 LINKS = re.compile(r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+")
@@ -52,9 +53,9 @@ class AModExec(commands.Cog):
         if not self.bot.setup or not self.states:
             return 1
 
-        if not message.guild or not hasattr(message.author, "guild") or not \
-                message.guild.me.guild_permissions.manage_messages or not \
-                message.guild.me.guild_permissions.administrator:
+        if not message.guild or (not
+                message.guild.me.guild_permissions.manage_messages and not
+                message.guild.me.guild_permissions.administrator):
             return 2
 
         if message.guild.id not in self.states:
@@ -82,6 +83,7 @@ class AModExec(commands.Cog):
         return False
 
     async def run_banned_words(self, message, state: objects.AutomodLevels):
+        content = message.content.lower()
         punishment = state.words
         if punishment == 0:
             return False
@@ -89,36 +91,34 @@ class AModExec(commands.Cog):
         found = False
 
         if state.default_filter:
-            if message.content.startswith(badwords_tup):
+            if content.startswith(badwords_tup):
                 found = True
 
-            elif message.content.endswith(badwords_tup):
+            elif content.endswith(badwords_tup):
                 found = True
 
             else:
-                for i in ms_badwords:
-                    if i in message.content:
-                        found = True
-                        break
+                found = any([True for i in ms_badwords if i.lower() in content])
+
 
         if state.regex is not None and state.bad_words:
-            if not found and state.regex.search(message.content):
+            if not found and state.regex.search(content):
                 found = True
 
-            elif not found and message.content.startswith(tuple(state.bad_words)):
+            elif not found and content.startswith(tuple(state.bad_words)):
                 found = True
 
         if found:
-            try:
-                await message.author.send(f"You can't say that in {message.guild.name}")
-            except:
-                pass
-
             embed = self.create_embed(message)
             msg, emoji = await self.do_punishment(message, delete=punishment>=1, mute=punishment>=2, kick=punishment>=3, ban=punishment>=4)
             embed.description = f"{emoji}\n{msg}"
             embed.add_field(name="Reason", value=f"**Bad Words:**\n{message.content}")
             await self.send_to_log_channel(message, embed)
+            try:
+                await message.author.send(f"You can't say that in {message.guild.name}")
+            except:
+                pass
+
             return True
 
         return False
@@ -197,7 +197,7 @@ class AModExec(commands.Cog):
         links = LINKS.findall(message.content)
 
         if links:
-            links = [link.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0] for link in links]
+            links = [yarl.URL(link).host for link in links]
 
             for link in links:
                 if link in state.blacklisted_links:

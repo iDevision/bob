@@ -1,10 +1,10 @@
 import asyncio
 
 import discord
-from discord.ext.commands import Paginator as CommandPaginator
+from discord.ext.commands import Paginator as CommandPaginator, CommandError
 
 
-class CannotPaginate(Exception):
+class CannotPaginate(CommandError):
     pass
 
 class Pages:
@@ -32,10 +32,13 @@ class Pages:
     permissions: discord.Permissions
         Our permissions for the channel.
     """
-    def __init__(self, ctx, *, entries, per_page=12, show_entry_count=True, title=None, embed_color = discord.Color.blurple(), nocount=False, delete_after=True):
+    def __init__(self, ctx, *, entries, per_page=12, show_entry_count=True, title=None, embed_color = discord.Color.blurple(), nocount=False, delete_after=True,
+        author=None, author_url=None):
         self.bot = ctx.bot
+        self.ctx = ctx
         self.delete_after = delete_after
         self.entries = entries
+        self.embed_author = author, author_url
         self.message = ctx.message
         self.channel = ctx.channel
         self.author = ctx.author
@@ -104,6 +107,9 @@ class Pages:
 
         if self.paginating and first:
             p.append('')
+
+        if self.embed_author[0]:
+            self.embed.set_author(name=self.embed_author[0], icon_url=self.embed_author[1] or discord.Embed.Empty)
 
         self.embed.description = '\n'.join(p)
         self.embed.title = self.title or discord.Embed.Empty

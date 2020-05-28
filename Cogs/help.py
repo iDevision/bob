@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 
 import discord
 
@@ -89,16 +90,13 @@ class HelpPaginator(Pages):
 
         self.bot.loop.create_task(go_back_to_current_page())
 
-import inspect
 class PaginatedHelpCommand(commands.HelpCommand):
     default_help_categories = inspect.cleandoc("""
     <:wrench:585880691267469332> settings
     <:cctv:587262240688701440> automod
     <:filterremove:585880690839650352> modlogs
     <:notebooxmultiple:586931039100993567> customcommands
-    <:pollbox:586931039067439104> community
     <:clipboardtextoutline:585880690772672533>️ tags
-    <:messageprocessing:585880691040845947> quotes
     <:asterisk:586930584639635466> misc
     <:music:586930584627183646> music
     <:at:587264378731102218> highlight
@@ -176,15 +174,22 @@ class PaginatedHelpCommand(commands.HelpCommand):
             alias = command.name if not parent else f'{parent} {command.name}'
         return f'{alias} {command.signature}'
 
+    def format_doc(self, doc: str)->str:
+        if doc is None:
+            return None
+        doc = doc.format(ctx=self.context)
+        return doc
+
     async def send_bot_help(self, mapping):
-        e = discord.Embed(color=discord.Color.teal())
-        e.set_footer(text=f"Your Server's prefix is: {self.context.prefix}")
+        e = self.context.embed_invis()
         e.add_field(name="Help Categories", value=self.default_help_categories)
         v = "[support server](https://discord.gg/wcVHh4h) | [invite!]" \
             "(https://discordapp.com/api/oauth2/authorize?client_id=587482154938794028&permissions=2146958839&scope=bot)"
         e.add_field(name=f"Updates in version {self.context.bot.version}", value=self.context.bot.most_recent_change)
+        #guild_commands = await self.context.bot.get_cog("_CustomCommands").guild_commands(self.context.guild)
+        #if guild_commands is not None:
+        #    e.add_field(name="Server specific commands", value=guild_commands)
         e.add_field(name="Links", value=v, inline=False)
-        e.set_image(url="https://cdn.discordapp.com/attachments/647604857544638468/647606721954447360/Devision.png")
         targ = self.get_destination()
         await targ.send(embed=e)
 
@@ -198,7 +203,7 @@ class PaginatedHelpCommand(commands.HelpCommand):
             entries = [c for c in cat.commands]
         pages = HelpPaginator(self, self.context, entries)
         pages.title = cat.title
-        pages.description = cat.description
+        pages.description = self.format_doc(cat.description)
         await pages.paginate()
 
     async def send_cog_help(self, cog: commands.Cog):
@@ -209,25 +214,34 @@ class PaginatedHelpCommand(commands.HelpCommand):
         entries = await self.filter_commands(cogcoms, sort=True)
         pages = HelpPaginator(self, self.context, entries)
         pages.title = f'{cog.qualified_name} Commands'
-        pages.description = cog.description
+        pages.description = self.format_doc(cog.description)
 
         await pages.paginate()
 
     def common_command_formatting(self, page_or_embed, command):
         page_or_embed.title = self.get_command_signature(command)
         if command.description:
-            page_or_embed.description = f'{command.description}\n\n{command.help}'
+            page_or_embed.description = f'{self.format_doc(command.description)}\n\n{self.format_doc(command.help)}'
         else:
-            page_or_embed.description = command.help or 'No help found...'
+            page_or_embed.description = self.format_doc(command.help) or 'No help found...'
+
+    def command_not_found(self, string):
+        return f"Nope, no {string} command found here"
 
     async def send_command_help(self, command):
         # No pagination necessary for a single command.
+        if command.hidden:
+            return await self.context.send(self.command_not_found(command.qualified_name))
+
         embed = discord.Embed(colour=discord.Colour.teal())
         self.common_command_formatting(embed, command)
         await self.context.send(embed=embed)
 
     async def send_group_help(self, group: commands.Group):
-        subcommands = list(group.walk_commands())
+        if group.hidden:
+            return await self.context.send(self.command_not_found(group.qualified_name))
+
+        subcommands = list(set(group.walk_commands())) if group.walk_help else list(group.commands)
         if len(subcommands) == 0:
             return await self.send_command_help(group)
 

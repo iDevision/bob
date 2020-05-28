@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord.ext.commands import *
 from discord import *
 from .checks import *
+from .context import Contexter as Context
 
 __all__ = ["Command", "Group", "Cog", "help_check", "command", "group", "Category", "Bot"]
 
@@ -44,6 +45,7 @@ class Group(commands.Group):
             checks = kwargs.get('help_checks', [])
         finally:
             self._help_checks = checks
+        self.walk_help = kwargs.get("walk_help", True)
         super().__init__(func, *args, **kwargs)
     
     def help_check(self, coro):
@@ -66,6 +68,7 @@ class Cog(commands.Cog):
     walk_on_help = False
     category = None
     _category = None
+    hidden = False
     def name(self):
         return self.qualified_name
 

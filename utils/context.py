@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from discord.ext.commands.context import Context as _context
 
-from . import paginator as _paginator
+from . import paginator as _paginator, objects as _objects
 
 
 def boolize(string):
@@ -25,6 +25,13 @@ class Contexter(_context):
         pages = _paginator.Pages(self, entries=fields, **kwargs)
         await pages.paginate()
 
+    async def paginate_text(self, content, codeblock=False):
+        if codeblock:
+            pages = _paginator.TextPages(self, content)
+        else:
+            pages = _paginator.TextPages(self, content, prefix="", suffix="")
+        await pages.paginate()
+
     async def ask(self, question, return_bool=True, timeout=60.0):
         await self.send(question)
         def predicate(msg):
@@ -37,8 +44,12 @@ class Contexter(_context):
             return m.content
         return boolize(m.content)
 
-    def embed(self, **kwargs):
+    def embed(self, **kwargs)->discord.Embed:
         return discord.Embed(color=discord.Color.teal(), **kwargs)
 
     def embed_invis(self, **kwargs):
         return discord.Embed(color=0x36393E, **kwargs)
+
+    @property
+    def player(self):
+        return self.bot.wavelink.get_player(self.guild.id, cls=_objects.Player)

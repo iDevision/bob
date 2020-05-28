@@ -20,36 +20,39 @@ import calendar
 import collections
 import datetime
 import json
-import os
-import asyncpg
 import sys
-import time
+
 import traceback
+import logging
+from logging import handlers
 import uuid
+import os
 
 import aiohttp
 import colorama
 import discord
 from discord.ext import tasks
+import asyncpg
 
-from utils import commands, errors
-from utils.checks import all_powerful_users
+from utils import commands, errors, objects
 from utils.context import Contexter
 
 colorama.init(autoreset=True)
 
+
 ids = {"BOB_ALPHA": 596223121527406603, "BOB": 587482154938794028}
 
-if False:
-    all_logger = logging.getLogger("discord")
-    all_logger.setLevel(logging.DEBUG)
-    all_handler = logging.FileHandler(filename=os.path.join(LOG_DIR, 'discord_all.log'), encoding='utf-8', mode='a')
-    all_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
-    all_logger.addHandler(all_handler)
-    warning_handler = logging.FileHandler(filename=os.path.join(LOG_DIR, 'discord_warnings.log'), encoding='utf-8', mode='a')
-    warning_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
-    warning_handler.setLevel(logging.WARNING)
-    all_logger.addHandler(warning_handler)
+
+logger = logging.getLogger("discord")
+command_logger = logging.getLogger("commands")
+warning_handler = handlers.TimedRotatingFileHandler(filename=os.path.join(os.path.dirname(__file__), 'logs', 'discord_warnings.log'), when="W0", encoding='utf-8', backupCount=10)
+warning_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+warning_handler.setLevel(logging.WARNING)
+logger.addHandler(warning_handler)
+comm_handler = handlers.TimedRotatingFileHandler(filename=os.path.join(os.path.dirname(__file__), 'logs', 'commands.log'), when="W0", encoding='utf-8', backupCount=10)
+comm_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+comm_handler.setLevel(logging.DEBUG)
+command_logger.addHandler(comm_handler)
 
 
 class _CaseInsensitiveDict(dict):
@@ -83,20 +86,18 @@ def parse_time(ps, return_times_instead=False):
     return btime.human_timedelta(v)
 
 
-async def muted(member):
-    # helper function
-    v = await bot.db.fetch("SELECT * FROM muted WHERE guild_id IS ? AND user_id IS ?", member.guild.id, member.id)
-    return bool(v)
-
 async def get_pre(bot, message):
     if not bot.setup:
         return bot.user.mention
     if message.guild is None:
         return ["!", "?", ""]
-    l = [bot.guild_prefixes[message.guild.id], f"<@{ids[bot.run_bot]} >", f"<@!{ids[bot.run_bot]} >"]
+    try:
+        l = [*bot.guild_prefixes[message.guild.id]]
+    except:
+        l = []
     if await bot.is_owner(message.author):
         l.append("$")
-    return l
+    return commands.when_mentioned_or(*l)(bot, message)
 
 
 class Bot(commands.Bot):
@@ -109,20 +110,16 @@ class Bot(commands.Bot):
         self.uhoh = getattr(keys, self.run_bot+"_UHOH")
         self.run_bot_display = self.settings['run_display_name']
         self.run_server = self.settings['server']
-        self.run_solo = False
+        self.pg = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresdsn'])) #type: asyncpg.pool.Pool
+        #self.bridge = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresbridge'])) #type: asyncpg.pool.Pool
         self.counter = 0
         self.version = "unloaded"
-        self.pg = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresdsn'])) #type: asyncpg.pool.Pool
         self.setup = False
         commands.Bot.__init__(self, prefix, help_command, description=description, **settings)
         self.__cogs = _CaseInsensitiveDict()
         from utils import db
         self.db = db.Database("general")
-        self.glob_db = db.Database("global")
         self.session = aiohttp.ClientSession(loop=self.loop)
-        if self.run_bot == "BOB_PREMIUM":
-            self.premium_auth_keys = {}
-        self._custom_listeners = []
         self.highlight_cache = {}
         self.custom_flags = ["mute"]
         self._custom_timers = []
@@ -133,21 +130,17 @@ class Bot(commands.Bot):
         self.afks = {}
         self.timed_messages = {}
         self.uptime = 0
-        self.STARTED_TIME = time.time()
-        self.streaming_messages = {}
+        self.logger, self.command_logger = logger, command_logger
         self.categories = {}
         self.bans = {}
         self.automod_states = {}
-        self.states = {}
+        self.logging_states = {}
         self.logging_ignore = []
         self.pings = collections.deque(maxlen=60)
         self.most_recent_change = self.changelog = None
         self.auths = {}
+        self.streamers = {}
 
-        self.twitch_cache = {}
-
-    def get_from_parent(self, parentid):
-        return self.twitch_cache.get(parentid, None)
 
     def get_from_guildid(self, guildid):
         for a, b in self.twitch_cache.items():
@@ -170,24 +163,16 @@ class Bot(commands.Bot):
     async def get_context(self, message, *, cls=None):
         return await super().get_context(message, cls=cls or Contexter)
 
-    async def is_owner(self, user):
-        return user.id in all_powerful_users
-
     def reload_settings(self):
         with open("settings.json") as f:
             self.settings = json.load(f)
 
-    async def pre_shutdown(self):
+    async def close(self):
         await bot.session.close()
         bot.custom_event_loop.cancel()
-        for m in self.streaming_messages.values():
-            try:
-                await m.delete()
-            except Exception as e:
-                print(f"failed to delete message: {e.__class__.__name__} - {e.args[0]}")
-        await bot.db.execute("UPDATE guild_members SET streaming_msg_id=0")  # yes, we want to remove all of them
         lchan = self.get_channel(629167007807438858)
         await lchan.send(embed=commands.Embed(title="Disconnecting", color=commands.Color.dark_red()))
+        await super().close()
 
     def create_task_and_count(self, coro):
         self.counter += 1
@@ -198,36 +183,16 @@ class Bot(commands.Bot):
 
         self.loop.create_task(do_stuff())
 
-    async def on_listener_error(self, coro, flag, error):
-        traceback.print_exc()
-
-    def add_custom_event(self, event_name: str, **kwargs):
-        self.custom_flags.append(event_name)
-
-    def custom_listener(self, coro: asyncio.coroutine):
-        name = coro.__name__.replace("loop_", "", 1)
-        if name not in self.custom_flags:
-            raise ValueError("unknown custom flag")
-        self._custom_listeners.append((name, coro))
-
-    async def dispatch_custom_listener(self, coro, data, flag):
-        try:
-            await coro(data)
-        except Exception as e:
-            await self.on_listener_error(coro, flag, e)
-
     @tasks.loop(seconds=1)
     async def custom_event_loop(self):
         now = calendar.timegm(datetime.datetime.utcnow().timetuple())
         for gid, flag, expiry, uid, payload in self._custom_timers:
             if expiry <= now:
                 data = json.loads(payload)
-                all_logger.debug("dispatching custom event: "+flag)
-                for coro_flag, coro in self._custom_listeners:
-                    if flag == coro_flag:
-                        await self.dispatch_custom_listener(coro, data, flag)
+                logger.debug("dispatching custom event: "+flag)
+                self.dispatch(flag, data)
                 self._custom_timers.remove((gid, flag, expiry, payload))
-                await self.db.execute("REMOVE FROM timers WHERE guild_id IS ? AND uid IS ?", (gid, uid))
+                await self.pg.execute("DELETE FROM timers WHERE guild_id = $1 AND uid IS $2", (gid, uid))
 
     async def schedule_timer(self, gid: int, flag: str, expiry: tuple, FromDict: dict=None, *args, **kwargs):
         payload = {}
@@ -243,7 +208,7 @@ class Bot(commands.Bot):
         payload['guild_id'] = gid
         expiry = calendar.timegm(expiry)
         uid = str(uuid.uuid4())
-        await self.db.execute("INSERT INTO timers VALUES (?,?,?,?,?)", (gid, flag, expiry, uid, json.dumps(payload, ensure_ascii=False)))
+        await self.pg.execute("INSERT INTO timers VALUES ($1,$2,$3,$4,$5)", gid, flag, expiry, uid, json.dumps(payload, ensure_ascii=False))
         # add it to a list so i dont have to make database calls every second in the custom event loop.
         self._custom_timers.append((gid, flag, expiry, uid, json.dumps(payload, ensure_ascii=False)))
 
@@ -269,14 +234,32 @@ class Bot(commands.Bot):
     async def on_message(self, message):
         if message.author.bot or not bot.is_ready() or not bot.setup:
             return
-        ctx = await self.get_context(message)
-        if ctx.command is None and self.user in message.mentions:
-            return await self.get_cog("Bull").run_ping(ctx)
-        await self.invoke(ctx)
-        if message.guild is not None and message.guild.id in self.custom_guilds:
-            await self.custom_guilds[message.guild.id].get_message(message, message.author, message.guild)
 
-    async def on_error(event, *args, **kwargs):
+        curr = self.get_cog("Currency")
+
+        if curr is not None:
+            curr.activity.update_rate_limit(message)
+
+        if message.guild.id not in self.logging_states:
+            rec = await self.pg.fetchrow("SELECT * FROM modlogs WHERE guild_id = $1;", message.guild.id)
+            if not rec:
+                self.logging_states[message.guild.id] = None
+
+            else:
+                self.logging_states[message.guild.id] = objects.LoggingFlags(self.pg, rec)
+
+        ctx = await self.get_context(message)
+
+        if ctx.command is None and self.user in message.mentions:
+            await self.get_cog("Bull").run_ping(ctx)
+
+        await self.invoke(ctx)
+
+    async def on_command(self, ctx):
+        command_logger.info(
+            f"Running command `{ctx.command.qualified_name}`. invoked by `{ctx.author}`. content: {ctx.message.content}")
+
+    async def on_error(self, event, *args, **kwargs):
         if isinstance(sys.exc_info()[0], commands.CommandError):
             return  # handled by on_command_error
         traceback.print_exc()
@@ -288,7 +271,7 @@ class Bot(commands.Bot):
         except Exception:
             pass
 
-bot = Bot(get_pre, help_command=None, owner_ids=all_powerful_users, case_insensitive=True)
+bot = Bot(get_pre, help_command=None, case_insensitive=True, owner_ids=[547861735391100931, 396177665742077956])
 
 @bot.check
 async def check_bans(ctx):
@@ -297,32 +280,8 @@ async def check_bans(ctx):
     return True
 
 bot.load_extension("jishaku")
-bot.load_extension("Cogs.changelog")
-bot.load_extension("Cogs.rtfm")
-bot.load_extension("Cogs.automod")
-bot.load_extension("Cogs.automod_exec")
-bot.load_extension("Cogs.misc")
-bot.load_extension("Cogs.customcommands")
-#bot.load_extension("Cogs.currency")
-bot.load_extension("Cogs.community")
-bot.load_extension("Cogs.configs")
-bot.load_extension("Cogs.modlogs")
-bot.load_extension("Cogs.tags")
-bot.load_extension("Cogs.moderation")
-bot.load_extension("Cogs.highlight")
-bot.load_extension("Cogs.quotes")
-bot.load_extension("Cogs.system")
-bot.load_extension("Cogs.logs")
-bot.load_extension("Cogs.google")
-bot.load_extension("libraries.server_custom_commands")
-bot.load_extension("Cogs.cah")
-bot.load_extension("Cogs.events")
-bot.load_extension("Cogs.reactionroles")
-bot.load_extension("Cogs.dbl")
-bot.load_extension("Cogs.help")
-bot.load_extension("Cogs.bs")
-#bot.load_extension("Cogs.socket")
-#bot.load_extension("Cogs.twitch")
+for i in bot.settings['initial_cogs']:
+    bot.load_extension("Cogs."+i)
 
 if __name__ == "__main__":
     print("starting...")

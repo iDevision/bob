@@ -296,7 +296,6 @@ class community(commands.Cog):
         """
         allows a community manager to enter someone into the database
         """
-        # technically 2 database calls is expensive, but its the best wa i could think of here.
         exists = await self.db.fetchrow("SELECT times FROM giveaway_entries WHERE guild_id IS ? AND user_id IS ?",
                                             (ctx.guild.id, person.id))
         if exists:

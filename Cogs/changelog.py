@@ -30,11 +30,12 @@ changes = {
     "V1.4.12": "hotfix\n- fixed an issue where modlog leaves would show up as kicks\n- fixes to the rtfm module\n- fix automod bad words not caching",
     "V1.4.13": "Fancy up logging messages",
     "V1.4.14": "Fix tags being case-sensitive",
-    "V1.4.15": "- automod overhaul!\nmore to follow in the coming days!"
+    "V1.4.15": "- automod overhaul!\nmore to follow in the coming days!",
+    "V1.4 FINAL": "- customcommands are disabled while i sort out some things\n- quotes are gone :crab:\n- added the `streaming` announcer"
     #"V1.4.16a": "- Removed qotd module\n- QOL updates to !remove\n- fixed some module states not caching properly\n- major preparations for the twitch bot launch"
     #            "\n- added some ping responses\n- fixed up help command\n- misc fixes\n- huge migration to postgresql database (some data lost)\n- restructured automod (all previous data lost)"
 }
-version = "1.4.15"
+version = "1.4 FINAL"
 
 most_recent = changes["V"+version]
 

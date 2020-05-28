@@ -1,3 +1,5 @@
+# borrowed from Belphegor
+
 import asyncio
 import functools
 import re
@@ -6,6 +8,7 @@ from urllib.parse import quote
 import aiohttp
 import discord
 from bs4 import BeautifulSoup as BS
+import typing, random
 
 from utils import commands
 from utils.errors import GoogleError
@@ -70,9 +73,11 @@ def safe_url(any_url):
 
 class _fun(commands.Cog):
     category="fun"
+    walk_on_help = False
     def __init__(self, bot):
         self.group = "fun"
         self.bot = bot
+        self.latest_xkcd = 2281
         self.google_session = aiohttp.ClientSession()
         self.google_lock = asyncio.Lock()
         self.google_headers = {
@@ -85,6 +90,44 @@ class _fun(commands.Cog):
 
     def cog_unload(self):
         self.bot.create_task_and_count(self.google_session.close())
+
+    @commands.command()
+    @commands.cooler()
+    @commands.check_module('fun')
+    async def xkcd(self, ctx, num_or_latest: typing.Union[int, str]=None):
+        """
+        some good ol' xkcd webcomics
+        """
+        num = num_or_latest
+        if num is None:
+            num = f"/{random.randint(1, 2260)}"
+        elif isinstance(num, str):
+            if num in ['latest', 'newest', 'l', 'n']:
+                num = ""
+            else:
+                return await ctx.send("psst, the (optional) argument needs to be a number, or 'latest'/'l'")
+        else:
+            if num > self.latest_xkcd:
+                return await ctx.send(f"hey, that one doesnt exist! try `{ctx.prefix}xkcd latest`")
+            num = f"/{num}"
+        async with self.bot.session.get(f"https://xkcd.com{num}/info.0.json") as r:
+            resp = await r.json()
+            if not num:
+                self.latest_xkcd = resp['num']
+            e = commands.Embed(name=resp['safe_title' if ctx.channel.is_nsfw() else "title"], description=resp['alt'], color=0x36393E)
+            e.set_footer(text=f"#{resp['num']}  • {resp['month']}/{resp['day']}/{resp['year']}")
+            e.set_image(url=resp['img'])
+            await ctx.send(embed=e)
+
+    @commands.command()
+    @commands.cooler()
+    @commands.check_module('fun')
+    async def dadjoke(self, ctx):
+        """
+        terrible jokes, anyone?
+        """
+        resp = await self.bot.session.get("https://icanhazdadjoke.com", headers={"Accept": "text/plain"})
+        await ctx.send((await resp.content.read()).decode("utf-8 "))
 
     def _parse_google(self, html):
         soup = BS(html, "lxml")
@@ -332,8 +375,8 @@ class _fun(commands.Cog):
             elif isinstance(result, str):
                 await ctx.send(result)
             elif isinstance(result, list):
-                paging = Pages(result, render=False)
-                await paging.navigate(ctx)
+                paging = Pages(ctx, entries=result)
+                await paging.paginate()
             else:
                 await ctx.send("No result found.\nEither query yields nothing or Google blocked me")
 

@@ -23,14 +23,13 @@ class Bull(commands.Cog):
     async def add_mention(self, ctx, *, entry):
         entry += "\n$m"
         self.mention_messages.append(entry)
-        with open("../bobbeta/data/bullshit.json", "w") as f: # can run from either bot
-            json.dump(self.mention_messages, f)
-        with open("../bob2/data/bullshit.json", "w") as f:
+
+        with open("./data/bullshit.json", "w") as f:
             json.dump(self.mention_messages, f)
         await ctx.send("Done")
 
     async def run_ping(self, ctx):
-        await ctx.send(random.choice(self.mention_messages).replace("$m", f"\n*Your server's prefix is `{ctx.bot.guild_prefixes[ctx.guild.id]}`*"))
+        await ctx.send(random.choice(self.mention_messages).replace("$m", f""))
 
     async def run_ban(self, ctx):
         await ctx.send(random.choice(self.ban_messages).replace("$u", str(ctx.author)).replace("$m", "\n\n*You have been banned from this bot. If you believe this is a mistake, please contact the support server.*"))

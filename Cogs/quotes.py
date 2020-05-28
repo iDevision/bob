@@ -1,6 +1,6 @@
 import random
 
-from utils import db, commands
+from utils import commands
 from utils.checks import *
 
 
@@ -16,28 +16,38 @@ class __quotes(commands.Cog):
     walk_on_help = True
     def __init__(self, bot):
         self.bot = bot
-        self.db = db.Database("quotes")
+
+    def cog_check(self, ctx):
+        raise commands.CheckFailure("Quotes are disabled.")
 
     @commands.group(invoke_without_command=True, aliases=["quotes"])
     @commands.cooler()
     async def quote(self, ctx, q: int = None):
         """
-        get a quote from your server! anyone can use this command!
+        get a quote from your server! anyone can use this command! **QUOTES ARE CURRENTLY DISABLED UNTIL TWITCH LAUNCH**
+        ... due to internal changes, quotes will be unusable by anyone other than twitch beta testers until twitch goes public. sorry :(
         optionally, you can specify a quote number.
         """
-        db = await self.db.fetchall("SELECT content, id FROM quotes WHERE guild_id IS ?", ctx.guild.id)
+        sock = self.bot.get_cog("sock")
+        if not sock:
+            return await ctx.send("this function is not available right now")
+        v = self.bot.get_from_guildid(ctx.guild.id)
+        if v[0] is None:
+            return await ctx.send("sorry, this server does not have a twitch link set up to put quotes into.")
+        quotes = await sock.reply({"_t": "GET_QUOTE", "all": True, "user_token": v[0]})
+        quotes = quotes.get("quotes", {})
+        if not quotes:
+            return await ctx.send("no quotes available!")
         if q is not None:
-            if q > len(db) or q < 0:
-                return await ctx.send(f"{ctx.author.mention} --> that quote doesnt exist!")
-        else:
-            if not len(db):
-                return await ctx.send(f"{ctx.author.mention} --> no quotes exist!")
-            q = random.randint(1, len(db))
-
-        for c, id in db:
-            if id is q:
-                await ctx.send(f"quote #{q}: {c}")
-                break
+            for t, qn in quotes.items():
+                if qn == q:
+                    return await ctx.send(f"quote {qn}: {t}")
+        pres = []
+        for i in quotes.items():
+            if not isinstance(i, tuple):
+                continue
+            pres.append(f"quote #{i[0]}: {i[1]}")
+        await ctx.send(random.choice(pres))
 
     @quote.command("list")
     @commands.cooler()
@@ -45,13 +55,19 @@ class __quotes(commands.Cog):
         """
         view a list of your servers quotes
         """
-        quotes = await self.db.fetchall("SELECT content, id FROM quotes WHERE guild_id IS ?", ctx.guild.id)
+        sock = self.bot.get_cog("sock")
+        if not sock:
+            return await ctx.send("this function is not available right now")
+        v = self.bot.get_from_guildid(ctx.guild.id)
+        if v[0] is None:
+            return await ctx.send("sorry, this server does not have a twitch link set up to put quotes into.")
+        quotes = await sock.reply({"_t": "GET_QUOTE", "all":True, "user_token": v[0]})
+        quotes = quotes.get("quotes", {})
+        if not quotes:
+            return await ctx.send("no quotes available!")
         pres = []
-        for i in quotes:
-            if not isinstance(i, tuple):
-                print(i)
-                continue
-            pres.append(f"{i[1]}. {i[0]}")
+        for i in quotes.items():
+            pres.append(f"{i[0]}. {i[1]}")
         await ctx.paginate(pres, nocount=True)
 
     @quote.command("add")
@@ -62,17 +78,21 @@ class __quotes(commands.Cog):
         add a "sacred texts" to your server's quote list!
         requires the `Community Manager` role or Higher
         """
-        data = await self.db.fetchall("SELECT * FROM quotes WHERE guild_id IS ?", ctx.guild.id)
-        try:
-            l = max(x[3] for x in data)
-        except:
-            l = 0
-        await self.db.execute("INSERT INTO quotes VALUES (?,?,?,?)",
-                                  (ctx.guild.id, ctx.author.id, msg, l+1))
-        await ctx.send(f"{ctx.author.mention} --> added quote {l+1}")
+        sock = self.bot.get_cog("sock")
+        if not sock:
+            return await ctx.send("this function is not available right now")
+        v = self.bot.get_from_guildid(ctx.guild.id)
+        if v[0] is None:
+            return await ctx.send("sorry, this server does not have a twitch link set up to put quotes into.")
+
+        resp = await sock.reply({"_t": "ADD_QUOTE", "user_token": v[0], "text": msg})
+        print(resp)
+        if resp['code'] != 200:
+            return await ctx.send("failed to add the quote!")
+        await ctx.send(f"{ctx.author.mention} --> added quote {resp.get('num')}")
 
 
-    @quote.command("remove", aliases=["rm", "delete"])
+    @quote.command("remove", aliases=["rm", "delete"], hidden=True)
     @check_manager()
     @commands.cooler()
     async def remquote(self, ctx, rem: int):
@@ -80,9 +100,9 @@ class __quotes(commands.Cog):
         delete part of the "sacred texts" from your server.
         requires the `Community Manager` role or higher
         """
+        return
         data = await self.db.fetchall("SELECT * FROM quotes WHERE guild_id IS ?", ctx.guild.id)
         l = max(x[3] for x in data)
-        print(l)
         if rem > l or rem < 0:
             return await ctx.send(f"{ctx.author.mention} --> that quote doesnt exist!")
         await self.db.execute("DELETE FROM quotes WHERE guild_id IS ? AND id IS ?", ctx.guild.id, rem)
@@ -96,9 +116,14 @@ class __quotes(commands.Cog):
         edit the "sacred texts".
         requires the `Community Manager` role or higher.
         """
-        data = await self.db.fetchall("SELECT * FROM quotes WHERE guild_id IS ?", ctx.guild.id)
-        l = max(x[3] for x in data)
-        if num > l or num < 0:
-            return await ctx.send(f"{ctx.author.mention} --> that quote doesnt exist!")
-        await self.db.execute("UPDATE quotes SET content=? WHERE guild_id IS ? AND id IS ?", msg, ctx.guild.id, num)
-        await ctx.send(f"{ctx.author.mention} --> edited quote #{num}")
+        sock = self.bot.get_cog("sock")
+        if not sock:
+            return await ctx.send("this function is not available right now")
+        v = self.bot.get_from_guildid(ctx.guild.id)
+        if v[0] is None:
+            return await ctx.send("sorry, this server does not have a twitch link set up to put quotes into.")
+
+        resp = await sock.reply({"_t": "ALTER_QUOTE", "user_token": v[0], "id": num, "text": msg})
+        if resp['code'] != 200:
+            return await ctx.send("couldnt find that quote. does it exist?")
+        await ctx.send(f"updated quote {num}")

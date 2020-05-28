@@ -3,6 +3,7 @@ import random
 
 import discord
 from discord.ext.commands import converter
+from discord.ext.commands.view import StringView
 
 from utils import argparse
 from utils import db, commands
@@ -12,22 +13,26 @@ from utils.checks import check_editor
 def setup(bot):
     bot.add_cog(_CustomCommands(bot))
 
+
 class _CustomCommands(commands.Cog):
     """
     this section allows you to make custom commands to use in your server.
     requires the `bot editor` role or higher.
     note that when making a custom command, **__DO NOT include a prefix__!** the server prefix will be used!
     """
+
     def __init__(self, bot):
         self.bot = bot
-        self.db = db.Database("customcommands")
 
-    async def parse(self, ctx, view, string: str):
+    def cog_check(self, ctx):
+        raise commands.CheckFailure("Custom Commands are currently disabled")
+
+    async def parse(self, ctx, view: StringView, string: str) -> str:
         params = ""
         if view.eof:
             target = ctx.author
         else:
-            possible_target = view.get_quoted_word() # i do a quoted word here, in case it's not a mention
+            possible_target = view.get_quoted_word()  # i do a quoted word here, in case it's not a mention
             ctx.bot = self.bot
             try:
                 target = await converter.MemberConverter().convert(ctx, possible_target)
@@ -57,9 +62,10 @@ class _CustomCommands(commands.Cog):
 
     @commands.Cog.listener("on_message")
     async def trigger(self, message: discord.Message):
-        if message.author.bot or not self.bot.setup or message.guild is None or not self.bot.guild_module_states[message.guild.id]['commands']:
+        if message.author.bot or not self.bot.setup or message.guild is None or not \
+                self.bot.guild_module_states[message.guild.id]['commands']:
             return
-        from discord.ext.commands.view import StringView
+
         args = StringView(message.content)
         prefs = await self.bot.get_prefix(message)
         v = False
@@ -69,48 +75,49 @@ class _CustomCommands(commands.Cog):
                     v = True
                     args.skip_string(prefix)
                     break
+
         else:
-            if message.content.startswith(prefs):
-                args.skip_string(prefs)
-                v = True
+            if args.skip_string(prefs):
+                return
+
         if not v:
             return
 
         com = args.get_word()
         args.skip_ws()
-        v = await self.db.fetch("SELECT response FROM custom_commands WHERE guild_id IS ? AND trigger IS ?", message.guild.id, com)
-        if not v:
+
+        data = await self.bot.pg.fetchval("SELECT content FROM commands WHERE guild_id=$1 AND name=$2;", message.guild.id, com)
+        if not data:
             return
+
         ctx = await self.bot.get_context(message)
-        v = await self.parse(ctx, args, v)
+        v = await self.parse(ctx, args, data)
         await message.channel.send(v)
-    
+
     async def guild_commands(self, guild):
-        l = [x[0] for x in await self.db.fetchall("SELECT trigger FROM custom_commands WHERE guild_id IS ?", guild.id)]
-        if not l:
-            return None
+        l = await self.bot.bridge.fetch("SELECT name FROM commands WHERE guild_id=$1;", guild.id)
         ret = ""
         for i in l:
-            ret += f"- {i}\n"
-        return ret
+            ret += f"- {i['name']}\n"
 
+        return ret or None
 
     @commands.group(invoke_without_command=True, aliases=['customcommands', "commands"])
     @commands.guild_only()
+    @commands.check_module("customcommands")
     async def command(self, ctx: commands.Context):
         """
         you need the `Bot Editor` role to edit this category. call without arguments for a list of your server's commands.
         """
-        l = await self.db.fetchall("SELECT trigger FROM custom_commands WHERE guild_id IS ?", ctx.guild.id)
-        if not l:
+        formatted = await self.guild_commands(ctx.guild)
+        if formatted is None:
             return await ctx.send("Your Server has no Custom Commands")
-        formatted = "```md\n"
-        for i in l:
-            formatted += f"- {i[0]}\n"
-        formatted += "```"
-        await ctx.send(embed=commands.Embed(color=discord.Color.teal(), title="Your Server's custom commands", description=formatted))
 
-    @command.command(aliases=['params'], brief="this isnt actually a command, type `help commands parameters` to see the list of available parameters.")
+        await ctx.send(embed=commands.Embed(color=discord.Color.teal(), title="Your Server's custom commands",
+                                            description=f"```md\n{formatted}\n```"))
+
+    @command.command(aliases=['params'],
+                     brief="this isnt actually a command, type `help commands parameters` to see the list of available parameters.")
     async def parameters(self, ctx):
         """
         __author parameters__
@@ -128,74 +135,47 @@ class _CustomCommands(commands.Cog):
         """
 
     @command.command(aliases=['show'])
-    async def raw(self, ctx, command):
+    @commands.check_module("customcommands")
+    async def raw(self, ctx, cmd):
         """
         show the command without any argument parsing
         """
-        v = await self.db.fetch("SELECT response FROM custom_commands WHERE guild_id IS ? AND trigger IS ?", ctx.guild.id, command)
-        if not v:
-            return await ctx.send(f"No custom command called {command} found!")
-        await ctx.send(await commands.clean_content().convert(ctx, v))
+        v = await self.bot.bridge.fetchval("SELECT content FROM commands WHERE guild_id=$1 AND name=$2", ctx.guild.id, cmd)
+        if v is None:
+            return await ctx.send("That command does not exist")
 
-    @command.command(aliases=["add"], usage="<command name> <command response>")
+        await ctx.send(v)
+
+    @command.command(aliases=["add"], usage="<command name> [command response]")
     @check_editor()
-    async def create(self, ctx, name: str, *, response: commands.clean_content = None):
+    @commands.check_module("customcommands")
+    async def create(self, ctx, name: str, *, response: str):
         """
         create a new custom command.
-        requires the `bot editor` role or higher
+        requires the `bot editor` role or higher.
+        note that there is no sanitization on this. pings will remain, and will ping every time the command is used.
         """
         if name in self.bot.all_commands:
-            return await ctx.send("that command is reserved!")
-        cur = await self.db.execute("SELECT * FROM custom_commands WHERE guild_id IS ? AND trigger IS ?", ctx.guild.id, name)
-        if await cur.fetchone():
-            await ctx.send(f"{ctx.author.mention} --> that command already exists!")
-        else:
-            if response is None:
-                def check(m):
-                    return m.author == ctx.author and m.channel == ctx.channel
+            return await ctx.send("that command is reserved by built in commands!")
 
-                await ctx.send(
-                    f"{ctx.author.mention} --> ok, so the command is named `{name}`. what should the content be?")
-                try:
-                    msg = await self.bot.wait_for("message", check=check, timeout=120)
-                except asyncio.TimeoutError:
-                    return await ctx.send("time limit reached. aborting.")
-                if msg.content == ctx.prefix + "cancel":
-                    return await ctx.send(f"{ctx.author.mention} --> aborting")
-                response = await commands.clean_content().convert(ctx, msg.content)
-            await self.db.execute("INSERT INTO custom_commands VALUES "
-                                         "(?, ?, ?, ?);", ctx.guild.id, name, response, 0)
-            await ctx.send(f"{ctx.author.mention} --> added command {name}")
-
+        await self.bot.bridge.execute("INSERT INTO commands VALUES ($1,$2,$3,$4,$5)", ctx.guild.id, name, response, 0, 0)
+        return await ctx.send(f"{ctx.author.mention} --> added command {name}")
 
     @command.command(usage="<command name> <command response>")
     @check_editor()
-    async def edit(self, ctx, name: str, *, response: str = None):
+    @commands.check_module("customcommands")
+    async def edit(self, ctx, name: str, *, response: str):
         """
         edits an already existing custom command.
         requires the `bot editor` role or higher.
         """
-        v = await self.db.fetchrow("SELECT * FROM custom_commands WHERE guild_id IS ? AND trigger IS ?", ctx.guild.id, name)
-        if not v:
-            await ctx.send(f"{ctx.author.mention} --> that command doesn't exist!")
-            return
+
+        if await self.bot.bridge.execute("UPDATE commands SET response = $1 WHERE guild_id = $2 AND name=$3 RETURNING *;",
+                                     response, ctx.guild.id, name):
+            await ctx.send(f"updated command `{name}`")
+
         else:
-            if response is None:
-                def check(m):
-                    return m.author == ctx.author and m.channel == ctx.channel
-
-                await ctx.send(
-                    f"{ctx.author.mention} --> ok, so the command is named `{name}`. what should the content be?")
-                try:
-                    msg = await self.bot.wait_for("message", check=check, timeout=120)
-                except asyncio.TimeoutError:
-                    return await ctx.send("time limit reached. aborting.")
-                if msg.content == ctx.prefix + "cancel":
-                    return await ctx.send(f"{ctx.author.mention} --> aborting")
-                response = await commands.clean_content().convert(ctx, msg.content)
-            await self.db.execute("UPDATE custom_commands SET response = ? WHERE guild_id IS ? AND trigger IS ?", response, ctx.guild.id, name)
-            await ctx.send(f"{ctx.author.mention} --> updated command `{name}`")
-
+            await ctx.send(f"No command named `{name}`")
 
     @command.command(aliases=['delete', 'rm'], usage="<command name>")
     @check_editor()
@@ -204,9 +184,10 @@ class _CustomCommands(commands.Cog):
         deletes a custom command.
         requires the `bot editor` role or higher.
         """
-        v = await self.db.fetchrow("SELECT * FROM custom_commands WHERE guild_id is ? and trigger IS ?", ctx.guild.id, name)
-        if not v:
-            await ctx.send(f"{ctx.author.mention} --> that command does not exist!")
+        query = "DELETE FROM commands WHERE guild_id=$1 AND name=$2 RETURNING *;"
+        p = await self.bot.bridge.fetch(query, ctx.guild.id, name)
+        if p:
+            await ctx.send(f"Removed command {name}")
+
         else:
-            await self.db.execute("DELETE FROM custom_commands WHERE guild_id is ? AND trigger IS ?", ctx.guild.id, name)
-            await ctx.send(f"{ctx.author.mention} --> removed command {name}")
+            await ctx.send(f"No command named {name}")

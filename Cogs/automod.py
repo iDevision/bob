@@ -5,6 +5,7 @@ from utils.checks import *
 import re
 import asyncio
 import inspect
+import yarl
 
 
 def setup(bot):
@@ -70,7 +71,7 @@ class automodCog(commands.Cog):
         data = await conn.fetch("SELECT * FROM automod;")
         ignore = await conn.fetch("SELECT * FROM automod_ignore;")
         words = await conn.fetch("SELECT * FROM automod_triggers;")
-        self.bot.pg.release(conn)
+        await self.bot.pg.release(conn)
 
         for record in data:
             self.states[record['guild_id']] = objects.AutomodLevels(record['flags'],
@@ -105,9 +106,9 @@ class automodCog(commands.Cog):
                 await asyncio.sleep(0)
                 if ignore_rec['guild_id'] == record['guild_id']:
                     if ignore_rec['type'] == 1:
-                        self.states[record['guild_id']].ignore_channels.append(ignore_rec['id'])
+                        self.states[record['guild_id']].ignored_channels.append(ignore_rec['id'])
                     else:
-                        self.states[record['guild_id']].ignore_roles.append(ignore_rec['id'])
+                        self.states[record['guild_id']].ignores_roles.append(ignore_rec['id'])
 
 
     @commands.group(invoke_without_command=True, usage="[subcommands]", walk_help=False)
@@ -396,7 +397,7 @@ class automodCog(commands.Cog):
     @am_sl.command("add", usage="<domain>")
     @check_configured()
     async def am_sl_add(self, ctx, url):
-        url = url.replace("http://", "").replace("https://", "").replace("www.", "").split("/")[0]
+        url = yarl.URL(url).host
         state = self.states[ctx.guild.id]
 
         if url in state.blacklisted_links:

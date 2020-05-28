@@ -1,3 +1,5 @@
+yarl
+humanize
 websockets
 aiohttp
 discord.py[voice]
@@ -9,9 +11,9 @@ aiosqlite3
 beautifulsoup4
 lxml
 wavelink
-pafy
-youtube_dl
 pillow
 colorama
 matplotlib
 numpy
+tabulate
+coronatracker

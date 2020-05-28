@@ -9,14 +9,38 @@ import discord
 import humanize
 import psutil
 import typing
+import logging
+import tabulate
 from discord.ext import tasks
 
-from utils import checks, errors, commands
-from utils.checks import all_powerful_users
-
+from utils import checks, errors, commands, paginator, objects
+from utils.objects import HOIST_CHARACTERS
+import inspect
 # run these now, because the first calls made to these return nothing useful.
 psutil.cpu_percent()
 psutil.getloadavg()
+
+logger = logging.getLogger("discord.system")
+
+MODULES = {
+    "moderation": True,
+    "quotes": True,
+    "automod": True,
+    "modlogs": True,
+    "community": True,
+    "fun": True,
+    "music": True,
+    "autoresponder": True,
+    "misc": True,
+    "events": True,
+    "currency": True,
+    "giveaway": True,
+    "basics": True,
+    "commands": True,
+    "tags": True,
+    "twitch": True,
+    "highlight": True
+}
 
 
 def setup(bot):
@@ -27,38 +51,38 @@ def setup(bot):
 class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
     def __init__(self, bot):
         self.bot = bot
-        self.db = bot.db
-        self.remindersdb = bot.get_cog("misc").remindersdb
         self.loop_reminders.start()
-        self.bot.custom_listener(self.loop_mute)
 
     def cog_unload(self):
         self.loop_reminders.cancel()
 
     def cog_check(self, ctx):
-        return ctx.author.id in all_powerful_users
+        return ctx.bot.is_owner(ctx.author)
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild, *args):
-        await self.db.execute("INSERT INTO roles VALUES (?,0,0,0,0,0)", guild.id)
-        await self.db.executemany("INSERT INTO guild_members VALUES (?,?,0,0)", [(guild.id, m.id) for m in guild.members])
-
-    @commands.Cog.listener()
-    async def on_guild_remove(self, guild):
-        await self.db.connection.executescript(f"DELETE FROM roles WHERE guild_id IS {guild.id}; DELETE FROM module_states"
-                                               f" WHERE guild_id IS {guild.id}; DELETE FROM guild_members WHERE guild_id IS {guild.id}")
-        await self.db.commit()
+        await self.bot.pg.execute("INSERT INTO roles VALUES ($1,0,0,0,0,0)", guild.id)
 
     @commands.Cog.listener("on_message")
     async def afk_runner(self, message):
         if message.author.bot or message.guild is None:
             return
-        guild_afks = await self.bot.db.fetchall("SELECT * FROM afks WHERE guild_id IS ?", message.guild.id)
+
+        if not message.mentions:
+            return
+
+        guild_afks = await self.bot.pg.fetch("SELECT * FROM afks WHERE guild_id = $1 ", message.guild.id)
         msg = ""
+
         for gid, uid, m in guild_afks:
             if uid == message.author.id:
-                await message.channel.send(f"{message.author.mention} --> welcome back! (removing your `AFK` state)")
-                return await self.bot.db.execute("DELETE FROM afks WHERE user_id is ? AND guild_id IS ?", (message.author.id, message.guild.id))
+                try:
+                    await message.channel.send(f"{message.author.mention} --> welcome back! (removing your `AFK` state)")
+                except:
+                    pass
+
+                return await self.bot.pg.execute("DELETE FROM afks WHERE user_id = $1 AND guild_id = $2", (message.author.id, message.guild.id))
+
             for i in message.mentions:
                 if i.id == uid:
                     psn = message.guild.get_member(uid)
@@ -68,30 +92,34 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
             msg = msg.strip()
             if '\n' in msg:
                 msg = "\n" + msg
+
             await message.channel.send(f"hey {message.author.mention}! {msg}")
 
     @tasks.loop(seconds=5)
     async def loop_reminders(self):
         if not self.bot.is_ready():
             return
-        rems = await self.remindersdb.fetchall("SELECT * FROM reminders")
+
+        rems = await self.bot.pg.fetch("SELECT * FROM reminders WHERE remind_time <= $1", datetime.datetime.utcnow())
         if not rems:
             return
-        dels = []
-        for gid, cid, msg, remindtime, link, uid, uuid in rems:
-            if remindtime <= calendar.timegm(datetime.datetime.utcnow().timetuple()):
+
+        for gid, cid, msg, remindtime, link, uid in rems:
+            if remindtime <= datetime.datetime.utcnow():
                 chan = self.bot.get_channel(cid)
                 if chan:
                     await chan.send(f"Hey <@{uid}>! Here's a reminder: {msg}\n\noriginal message: {link}")
-                dels.append((uuid,))
-        v = await self.remindersdb.executemany("DELETE FROM reminders WHERE uuid IS ?", dels)
 
-    async def loop_mute(self, data: dict):
+        await self.bot.pg.execute("DELETE FROM reminders WHERE remind_time <= $1", datetime.datetime.utcnow())
+
+    @commands.Cog.listener()
+    async def on_unmute(self, data: dict):
         member = self.bot.get_guild(data['guild_id']).get_member(data['user'])
         await member.remove_roles(discord.Object(id=data['role_id']))
         logging = self.bot.get_cog("logging")
         if not logging:
             return
+
         await logging.on_member_unmute(discord.Object(id=data['guild_id']), member, mod=str(self.bot.user), reason="Auto")
 
     @commands.group("system", invoke_without_command=True, usage="[subcommand]", aliases=['sys', 'dev'])
@@ -103,16 +131,16 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         self.bot.reload_settings()
         await ctx.message.add_reaction("\U0001f44d")
 
-    @system.command()
+    @system.command(aliases=['block', 'hammer'])
     async def ban(self, ctx, user: typing.Union[discord.User, int], *, reason="None Given"):
         """
         ban a user from the bot
         """
-        await self.bot.db.execute("INSERT INTO bans VALUES (?,?)", user.id if isinstance(user, discord.User) else user, reason)
-        self.bot.bans[user.id] = reason
+        await self.bot.pg.execute("INSERT INTO bans VALUES ($1,$2)", user.id if isinstance(user, discord.User) else user, reason)
+        self.bot.bans[user.id if isinstance(user, discord.User) else user] = reason
         await ctx.send(f"{str(user)} has been banned from BOB")
 
-    @system.command()
+    @system.command(aliases=['unblock', 'unhammer'])
     async def unban(self, ctx, user: typing.Union[discord.User, int]):
         """
         unban a user from the bot
@@ -120,7 +148,7 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         if not (user.id if not isinstance(user, int) else user) in self.bot.bans:
             return await ctx.send("That user is not banned")
         del self.bot.bans[user.id if not isinstance(user, int) else user]
-        await self.bot.db.execute("DELETE FROM bans WHERE user_id IS ?", user.id if not isinstance(user, int) else user)
+        await self.bot.pg.execute("DELETE FROM bans WHERE user_id = $1", user.id if not isinstance(user, int) else user)
         await ctx.send(f"unbanned user {user}")
 
     @system.command("stats", usage="(no parameters)")
@@ -148,7 +176,7 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         e.add_field(name="Load Average", value=str(ldavg[2]))
         del ldavg
         try:
-            e.add_field(name="Lavalink Players", value=str(len(self.bot.lavalink.players)))
+            e.add_field(name="Wavelink Players", value=str(len(self.bot.wavelink.players)))
         except: pass
         proc = psutil.Process()
         with proc.oneshot():
@@ -165,11 +193,10 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
         e.add_field(name="Platform", value=sys.platform)
         await ctx.send(embed=e)
 
-    @system.command("quit", aliases=['kys'])
+    @system.command("quit", aliases=['kys', "die"])
     async def quit_bot(self, ctx):
-        await self.bot.pre_shutdown()
         await ctx.send(f"{ctx.author.mention} --> shutting down.")
-        await self.bot.logout()
+        await self.bot.close()
 
     @system.command("load", aliases=["r", "reload", "l"])
     async def reloads(self, ctx, module: str = None):
@@ -218,10 +245,47 @@ class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
                 f += f"\U0001f4e4 - {fn.replace('.py', '')}\n"
         await ctx.send(embed=ctx.embed(description=f))
 
+    @system.command()
+    async def logs(self, ctx, *, log=None):
+        if log is None:
+            l = sorted(os.listdir("logs"))
+            pages = paginator.Pages(ctx, entries=l)
+            return await pages.paginate()
+        if os.path.exists("logs/"+log):
+            with open(f"logs/{log}") as f:
+                v = await ctx.bot.session.post("https://mystb.in/documents", data=f.read().encode())
+                v = await v.json()
+                await ctx.send(f"https://mystb.in/{v['key']}")
+
+    @system.command()
+    async def sql(self, ctx, db, *, query):
+        multi = query.count(";") > 1
+        meth = getattr(self.bot, db, None)
+        if meth is None:
+            return await ctx.send(f"No database found as {db}")
+        if multi:
+            meth = meth.execute
+        else:
+            meth = meth.fetch
+
+        try:
+            ret = await meth(query)
+        except Exception as e:
+            return await ctx.paginate_text(traceback.format_exc(), codeblock=True)
+        if multi:
+            return await ctx.paginate_text(ret, codeblock=True)
+        if not ret:
+            return await ctx.message.add_reaction(":GreenTick:609893073216077825")
+
+        h = list(ret[0].keys())
+        table = tabulate.tabulate([list(map(repr, k)) for k in ret], tablefmt='psql', headers=h)
+        await ctx.paginate_text(table, codeblock=True)
 
 ### ==========================
 
 async def on_command_error(ctx: commands.Context, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
     if isinstance(error, (errors.CommandInterrupt, errors.ModuleDisabled)):
         return await ctx.send(error.message, delete_after=5)
     if isinstance(error, commands.CommandInvokeError) and isinstance(error.original, discord.HTTPException):
@@ -233,8 +297,6 @@ async def on_command_error(ctx: commands.Context, error):
             return await ctx.send("Discord Error: "+error.text)
     if isinstance(error, checks.MissingRequiredRole):
         return await ctx.send(error.message)
-    if isinstance(error, commands.CommandNotFound):
-        return
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"{ctx.author.mention} --> missing required argument(s)! `{error.param}`")
     elif isinstance(error, commands.BadArgument):
@@ -244,30 +306,39 @@ async def on_command_error(ctx: commands.Context, error):
     elif isinstance(error, commands.CommandOnCooldown):
         return await ctx.send(f"whoa there, slow down! ({round(error.retry_after)} remaining)", delete_after=2)
     elif isinstance(error, (commands.ArgumentParsingError, commands.ConversionError)):
-        await ctx.send("Bad input; couldn't parse your arguments")
+        await ctx.send("Bad input: couldn't parse your arguments")
     elif isinstance(error, errors.BannedUser):
-        await ctx.send(error.message)
+        await ctx.bot.get_cog("Bull").run_ban(ctx)
     elif isinstance(error, commands.CommandError) and not isinstance(error, commands.CommandInvokeError):
         await ctx.send(error.args[0])
     else:
         v = f"error:\n__message__:\n> id: {ctx.message.id}\n> content: {ctx.message.content}\n__guild__:\n> id: {ctx.guild.id}" \
                 f"\n> name: {ctx.guild.name}\n__Author__:\n> name: {ctx.author}\n> id: {ctx.author.id}\n __error__:\n> class: {error.original.__class__.__name__}\n> args: {error.original.args}"
-        traceback.print_exception(type(error.original), error.original, error.original.__traceback__, file=sys.stderr)
+        track = traceback.format_exception(type(error.original), error.original, error.original.__traceback__)
+        ctx.bot.command_logger.exception(inspect.cleandoc(f"""
+Commmand Exception:
+Author: {ctx.author} (id: {ctx.author.id})
+Guild: {ctx.guild.name} (id: {ctx.guild.id}) (large: {ctx.guild.large})
+{''.join(track)}
+        """))
         e = discord.Embed(description=v +
                                         "\n\n```" +
                                         "".join(traceback.format_exception(
-                                            type(error.original), error.original, error.original.__traceback__)).replace("Angelo", "TMHK")+"\n```",
+                                            type(error.original), error.original, error.original.__traceback__))+"\n```",
                           timestamp=datetime.datetime.utcnow())
 
         from libraries import keys
         c = getattr(keys, ctx.bot.settings['run_bot']+"_UHOH", 604803860611203072)
         try:
+            print("".join(traceback.format_exception(
+                                            type(error.original), error.original, error.original.__traceback__)))
             await ctx.bot.get_channel(c).send(embed=e)
         except Exception as e:
-            await ctx.send("couldn't alert the dev of your error due to: "+e.args[0])
+            await ctx.bot.get_channel(c).send(embed=commands.Embed(description=f"Error occurred, traceback too long\n\n{error.args}", timestamp=datetime.datetime.utcnow()))
+            await ctx.send("something happened while running that command! The dev is on his way to fix it!")
         else:
             if not await ctx.bot.is_owner(ctx.author):
-                await ctx.send("An error has occurred while running this command. The dev has been informed, and will fix it soon!")
+                await ctx.send("something happened while running that command! The dev is on his way to fix it!")
             else:
                 await ctx.send(embed=e)
 
@@ -307,64 +378,76 @@ class MyCog(commands.Cog):
         print(f'{time.ctime()}: logged in as {self.bot.user}')
         print("caching data...")
         statusc = self.bot.get_channel(629167007807438858)
-        statusc = await statusc.send(embed=discord.Embed(title="Connected", color=discord.Color.orange(), description="loading..."))
+        statusc = await statusc.send(embed=discord.Embed(title="Connected", color=discord.Color.orange()))
         stats = []
-        self.bot.uptime = time.time()
+        self.bot.uptime = datetime.datetime.utcnow()
+
         if self.bot.setup:
             return
-        try:
-            self.bot.load_extension("Cogs.music")
-        except:
-            stats.append(("\U000026a0", "failed to load the music module"))
-        prefixes = await self.bot.get_cog("settings").db.fetchall("SELECT guild_id, prefix FROM guild_configs")
+
+        prefixes = await self.bot.pg.fetch("SELECT guild_id, prefix FROM prefixes;")
+
         for gid, pref in prefixes:
-            self.bot.guild_prefixes[gid] = pref
-        bans = await self.bot.db.fetchall("SELECT * FROM bans")
+            if gid in self.bot.guild_prefixes:
+                self.bot.guild_prefixes[gid].append(pref)
+
+            else:
+                self.bot.guild_prefixes[gid] = [pref]
+
+        del prefixes
+
+        bans = await self.bot.pg.fetch("SELECT user_id, reason FROM bans;")
         for i in bans:
-            self.bot.bans[i[0]] = i[1]
+            self.bot.bans[i['user_id']] = i['reason']
+
         del bans
         # first, cache the role states.
-        states = await self.bot.db.fetchall("SELECT * FROM roles")
-        for gid, editor, muted, moderator, manager, streamer in states:
-            self.bot.guild_role_states[gid] = {"editor": editor, "muted": muted, "moderator": moderator, "manager": manager,
-                                            "streamer": streamer}
+        states = await self.bot.pg.fetch("SELECT * FROM roles")
+
+        for record in states:
+            self.bot.guild_role_states[record['guild_id']] = {
+                                                "editor": record['editor'],
+                                                "muted": record['muted'],
+                                                "moderator": record['moderator'],
+                                                "manager": record['manager'],
+                                              }
 
         # next, cache the module states from existing data.
-        states = await self.bot.db.fetchall("SELECT * FROM module_states")
-        for gid, mod, quotes, giveaway, automod, modlogs, community, fun, music, autoresponder, events, currency, modmail, basics, commands, tags, _, twitch_intergration, highlight in states:
-            self.bot.guild_module_states[gid] = {"moderation": bool(mod), "quotes": bool(quotes), "automod": bool(automod), "modlogs": bool(modlogs),
-                                            "community": bool(community), "fun": bool(fun), "music": bool(music), "autoresponder": bool(autoresponder),
-                                            "events": bool(events), "currency": bool(currency), "giveaway": bool(giveaway), "misc": int(basics),
-                                            "modmail": bool(modmail), "basics": bool(basics), "commands": bool(commands),
-                                            "tags": bool(tags), "twitch": bool(twitch_intergration), "highlight": highlight}
-        for vals in await self.bot.db.fetchall("SELECT * FROM timers"):
-            self.bot._custom_timers.append(vals)
+        states = await self.bot.pg.fetch("SELECT guild_id, flags FROM modules")
+
+        for record in states:
+            self.bot.guild_module_states[record['guild_id']] = objects.load_modules(record)
+
+        vals = await self.bot.pg.fetch("SELECT * FROM stream_announcer")
+        for record in vals:
+            self.bot.streamers[record['guild_id']] = {"channel": record['channel'], "ids": record['users'], "message": record['message']}
+
+        del vals
+
         # next, build the tables for the guilds joined during downtime (if any).
         for guild in self.bot.guilds:
             if guild.id not in self.bot.guild_prefixes:
                 # all the cogs have their own on_guild_join method for creating new database rows.
                 print("dispatching on_guild_join for server: "+str(guild.name))
                 self.bot.dispatch("guild_join", guild, False) # im assuming if the prefix isnt there that nothing is there
-                self.bot.guild_prefixes[guild.id] = "!"
+                self.bot.guild_prefixes[guild.id] = ["!"]
+                continue
+
             if guild.id not in self.bot.guild_module_states:
-                self.bot.guild_module_states[guild.id] = {"moderation": False, "quotes": False, "automod": False,
-                                                          "modlogs": False,
-                                                          "community": False, "fun": False, "music": False,
-                                                          "autoresponder": False, "misc": False,
-                                                          "events": False, "currency": False, "giveaway": False,
-                                                     "modmail": False, "basics": False, "commands": False, "tags": False,
-                                                     "twitch": False, "highlight": False}
-                await self.bot.db.execute("INSERT INTO module_states VALUES (?,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)",
-                                          guild.id)
+                mods = await self.bot.pg.fetchrow("INSERT INTO modules VALUES ($1, $2) RETURNING *", guild.id,
+                                                 objects.save_modules({}))
+                self.bot.guild_module_states[guild.id] = objects.load_modules(mods)
+
             if guild.id not in self.bot.guild_role_states:
-                self.bot.guild_role_states[guild.id] = {"editor": 0, "muted": 0, "manager": 0, "moderator": 0, "streamer": 0}
-                await self.bot.db.execute("INSERT INTO roles VALUES (?,0,0,0,0,0)", guild.id)
+                self.bot.guild_role_states[guild.id] = {"editor": 0, "muted": 0, "manager": 0, "moderator": 0}
+                await self.bot.pg.execute("INSERT INTO roles VALUES ($1, null, null, null, null)", guild.id)
+
         self.bot.setup = True
         print(f"{':'.join(time.strftime('%H %M %S').split())} cache built.")
-        self.bot.dispatch("currency_ready")
         e = discord.Embed(title="Connected", color=discord.Color.green())
         for a, b in stats:
             e.add_field(name=a, value=b)
+
         await statusc.edit(embed=e)
 
     @commands.Cog.listener()
@@ -381,36 +464,43 @@ class MyCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member, silence=False):
-        guild = member.guild
-        db = self.bot.db
         if silence:
             return
-        roles = await db.fetchall("SELECT role_id FROM role_auto_assign WHERE guild_id IS ?", guild.id)
-        if not roles:
+
+        if not member.guild.me.guild_permissions.manage_roles and not member.guild.me.guild_permissions.administrator:
             return
-        robj = []
-        for role in roles:
-            v = guild.get_role(role[0])
-            if not v:
-                continue
-            robj.append(v)
-            del v
-        await member.add_roles(*robj)
+
+        roles = await self.bot.pg.fetch("SELECT role_id FROM role_assign WHERE guild_id = $1", member.guild.id)
+        if roles:
+            robj = []
+            for role in roles:
+                v = member.guild.get_role(role[0])
+                if not v:
+                    continue
+
+                robj.append(v)
+
+            await member.add_roles(*robj)
+
+        muted = await self.bot.pg.fetch("SELECT user_id FROM mutes WHERE guild_id = $1 AND user_id = $2", member.guild.id, member.id)
+        if muted:
+            m = member.guild.get_role(self.bot.guild_role_states[member.guild.id]['muted'])
+            if m:
+                await member.add_roles(m)
+
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild, pres=True):
-        await self.bot.db.execute("INSERT INTO module_states VALUES (?, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)", guild.id)
-        await self.bot.db.execute("INSERT INTO roles VALUES (?, 0, 0, 0, 0, 0)", guild.id)
-        self.bot.guild_prefixes[guild.id] = "!" if self.bot.run_bot != "BOB_ALPHA" else "]"
+        self.bot.guild_prefixes[guild.id] = ["!"] if self.bot.run_bot != "BOB_ALPHA" else ["]"]
         self.bot.guild_role_states[guild.id] = {"editor": None, "muted": None, "moderator": None, "manager": None,
                                             "streamer": None}
-        self.bot.guild_module_states[guild.id] = {"moderation": True, "quotes": True, "automod": True,
-                                                          "modlogs": True,
-                                                          "community": True, "fun": True, "music": True,
-                                                          "autoresponder": True, "misc": True,
-                                                          "events": True, "currency": True, "giveaway": True,
-                                                     "modmail": True, "basics": True, "commands": True, "tags": True,
-                                                     "twitch": True, "highlight": True}
+        async with self.bot.pg.acquire() as conn:
+            mods = await conn.fetchrow("INSERT INTO modules VALUES ($1, $2) RETURNING *", guild.id, objects.save_modules({}))
+            self.bot.guild_module_states[guild.id] = objects.load_modules(mods)
+            await conn.execute("INSERT INTO roles VALUES ($1, null, null, null, null)", guild.id)
+            await conn.execute("INSERT INTO prefixes VALUES ($1,$2)", guild.id, "!")
+
+        self.bot.guild_role_states[guild.id] = {"editor": 0, "muted": 0, "manager": 0, "moderator": 0}
         fmt = f"**__Guild Joined__**\nname: {guild.name}\nid: {guild.id}\nowner: {guild.owner}\n\nMembers: {len(guild.members)}"
         e = commands.Embed(description=fmt, color=discord.Color.teal())
         await self.bot.get_channel(662176688150675476).send(embed=e)
@@ -419,41 +509,21 @@ class MyCog(commands.Cog):
     async def on_guild_remove(self, guild):
         del self.bot.guild_prefixes[guild.id]
         del self.bot.guild_module_states[guild.id]
-        await self.bot.db.execute("DELETE FROM roles WHERE guild_id IS ?", guild.id)
-        await self.bot.db.execute("DELETE FROM module_states WHERE guild_id IS ?", guild.id)
+        async with self.bot.pg.acquire() as conn:
+            await conn.execute("DELETE FROM roles WHERE guild_id = $1", guild.id)
+            await conn.execute("DELETE FROM modules WHERE guild_id = $1", guild.id)
+            await conn.execute("DELETE FROM prefixes WHERE guild_id = $1", guild.id)
+
         fmt = f"**__Guild Left__**\nname: {guild.name}\nid: {guild.id}\nowner: {guild.owner}\n\nMembers: {len(guild.members)}"
         e = commands.Embed(description=fmt, color=commands.Color.red())
         await self.bot.get_channel(662176688150675476).send(embed=e)
 
     @commands.Cog.listener()
-    async def on_member_update(self, before, after):
+    async def on_member_update(self, _, after: commands.Member):
         if after.bot:
             return
-        if isinstance(after.activity, discord.Streaming) or isinstance(before.activity, discord.Streaming):
-            v = self.bot.get_cog("settings").stream_cache.get(after.guild.id)
-            if v is None:
-                return
-            AS, ACS = v.values()
-            if not AS or not ACS:
-                return
-            c = self.bot.get_channel(ACS)  # type: discord.TextChannel
-            if c is None:
-                return
-            if not isinstance(after.activity, discord.Streaming) and isinstance(before.activity, discord.Streaming):
-                msgid = self.bot.streaming_messages.get(f"{after.id}-{after.guild.id}", None)
-                if msgid is not None:
-                    v = await c.fetch_message(msgid)
-                    try:
-                        await v.delete()
-                    except:
-                        pass
-                    del self.bot.streaming_messages[f"{after.id}-{after.guild.id}"]
-            elif after.activity == discord.Streaming:
-                print(after.activity.assets)
-                e = discord.Embed(title="Stream Alert!")
-                e.set_author(name=str(after), icon_url=after.avatar_url)
-                e.description = f"{after} is now streaming {after.activity.details} over [here!]({after.activity.url})"
-                e.add_field(name="Title", value=after.activity.name)
-                e.add_field(name="Twitch name", value=after.activity.twitch_name)
-                m = await c.send(embed=e)
-                self.bot.streaming_messages[f"{after.id}-{after.guild.id}"] = m.id
+
+        if after.guild.me.guild_permissions.manage_nicknames or after.guild.me.guild_permissions.administrator:
+            if not any([x.hoist for x in after.roles]):
+                if after.display_name.startswith(HOIST_CHARACTERS):
+                    await after.edit(nick="Hoister no hoisting")

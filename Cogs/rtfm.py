@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands as _root_commands, tasks as _root_tasks
 
 from utils import checks, errors, paginator
-from utils import db, commands
+from utils import commands
 import inspect
 import aiohttp
 
@@ -77,7 +77,7 @@ class _rtfm(commands.Cog):
     category="misc"
     def __init__(self, bot):
         self.bot = bot
-        self.db = db.Database("rtfm")
+        self.db = bot.pg
         self.defaults = {}
         self.pages = {}
         self.usage = {}
@@ -91,9 +91,8 @@ class _rtfm(commands.Cog):
     async def offload_unused_cache(self):
         now = datetime.datetime.utcnow()
         for key, i in self.usage.items():
-            if (now-i).minute >= 20 and key in self._rtfm_cache:
+            if (now-i).total_seconds() >= 1200 and key in self._rtfm_cache:
                 del self._rtfm_cache[key]
-
 
     def parse_object_inv(self, stream, url):
         # key: URL
@@ -148,23 +147,23 @@ class _rtfm(commands.Cog):
         return result
 
     async def build_rtfm_lookup_table(self, to_index=None):
-        v = await self.db.fetchall("SELECT * FROM default_rtfm")
-        pages = await self.db.fetchall("SELECT * FROM pages")
-        for gid, default in v:
-            self.defaults[gid] = default
+        v = await self.db.fetch("SELECT * FROM default_rtfm")
+        pages = await self.db.fetch("SELECT * FROM pages")
+        for record in v:
+            self.defaults[record['guild_id']] = record['name']
 
         cache = {}
-        for quick, long, url in pages:
-            self.pages[quick] = {"quick": quick, "long":long, "url":url}
-            if quick != to_index:
+        for record in pages:
+            self.pages[record['quick']] = {"quick": record['quick'], "long": record['long'], "url": record['url']}
+            if record['quick'] != to_index:
                 continue
 
-            async with self.bot.session.get(url + '/objects.inv') as resp:
+            async with self.bot.session.get(record['url'] + '/objects.inv') as resp:
                 if resp.status != 200:
-                    raise commands.CommandError(f'Cannot build rtfm lookup table, try again later. (no objects.inv found at {url})')
+                    raise commands.CommandError(f'Cannot build rtfm lookup table, try again later. (no objects.inv found at {record["url"]})')
 
                 stream = SphinxObjectFileReader(await resp.read())
-                cache[quick] = self.parse_object_inv(stream, url)
+                cache[record['quick']] = self.parse_object_inv(stream, record['url'])
         if self._rtfm_cache is None:
             self._rtfm_cache = cache
         else:
@@ -235,9 +234,9 @@ class _rtfm(commands.Cog):
         """
         shows a list of the current documentation entries. you can use the short name to use the doc. ex: !rtfm py {insert thing here}
         """
-        all_entries = await self.db.fetchall("SELECT * FROM pages")
+        all_entries = await self.db.fetch("SELECT * FROM pages")
         entries = [(a[0] + f" {'(loaded)' if a[0] in self._rtfm_cache else '(unloaded)'}", f"{a[1]}\n{a[2]}") for a in all_entries]
-        pages = paginator.FieldPages(ctx, entries=entries)
+        pages = paginator.FieldPages(ctx, entries=entries, per_page=5)
         await pages.paginate()
 
     @rtfm.command()
@@ -252,7 +251,7 @@ class _rtfm(commands.Cog):
             return await ctx.send(f"`{default}` is not a valid RTFM! If you wish to add one, please use `!rtfm add` to submit it for review")
         else:
             self.defaults[ctx.guild.id] = default
-            await self.db.execute("INSERT INTO default_rtfm VALUES (?,?)", ctx.guild.id, default)
+            await self.db.execute("INSERT INTO default_rtfm VALUES ($1,$2)", ctx.guild.id, default)
             await ctx.send(f"set the guild's default rtfm to `{self.pages[default]['long']}`")
 
     @rtfm.command(usage="")
@@ -268,9 +267,11 @@ class _rtfm(commands.Cog):
         if await ctx.bot.is_owner(ctx.author) and quick and long and url:
             if quick in self.pages:
                 return await ctx.send("Already exists")
-            await self.db.execute("INSERT INTO pages VALUES (?,?,?)", quick, long, url)
+            await self.db.execute("INSERT INTO pages VALUES ($1,$2,$3)", quick, long, url)
+
             self.pages[quick] = {"quick": quick, "long": long, "url": url}
             return await ctx.send("\U0001f44d")
+
         async def check_cancel(ctx, m):
             if "cancel" in m.content:
                 raise errors.CommandInterrupt("aborting")
@@ -294,7 +295,7 @@ class _rtfm(commands.Cog):
             if v.status == 404: raise commands.CommandError
         except commands.CommandError:
             raise errors.CommandInterrupt("Invalid url provided (no /objects.inv found). remember to remove the current page! ex. https://docs.readthedocs.io/latest")
-        await self.db.execute("INSERT INTO waiting VALUES (?,?,?,?)", ctx.author.id, quick, long, url.strip("/"))
+        await self.db.execute("INSERT INTO waiting VALUES ($1,$2,$3,$4)", ctx.author.id, quick, long, url.strip("/"))
         chan = ctx.bot.get_channel(625461752792088587)
         e = discord.Embed()
         e.add_field(name="quick", value=quick)
@@ -308,7 +309,7 @@ class _rtfm(commands.Cog):
     @rtfm.command(hidden=True)
     @commands.is_owner()
     async def approve(self, ctx, quick):
-        v = await self.db.fetchrow("SELECT * FROM waiting WHERE quick IS ?", quick)
+        v = await self.db.fetchrow("SELECT * FROM waiting WHERE quick = $1", quick)
         if v is None:
             raise commands.CommandError(f"No waiting approvals found with quick path `{quick}`")
         uid, quick, long, url = v
@@ -321,14 +322,14 @@ class _rtfm(commands.Cog):
             except discord.Forbidden:
                 await ctx.send("Users DMs are blocked. Can't dm approval")
         await ctx.send(f"approved docs `{quick}`")
-        await self.db.execute("INSERT INTO pages VALUES (?,?,?)", quick, long, url)
-        await self.db.execute("DELETE FROM waiting WHERE quick IS ?", quick)
+        await self.db.execute("INSERT INTO pages VALUES ($1,$2,$3)", quick, long, url)
+        await self.db.execute("DELETE FROM waiting WHERE quick = $1", quick)
         self.pages[quick] = {"quick": quick, "long": long, "url": url}
 
     @rtfm.command(hidden=True)
     @commands.is_owner()
     async def deny(self, ctx, quick: str, *, reason: str):
-        v = await self.db.fetchrow("SELECT * FROM waiting WHERE quick IS ?", quick)
+        v = await self.db.fetchrow("SELECT * FROM waiting WHERE quick = $1", quick)
         if v is None:
             raise commands.CommandError(f"No waiting approvals found with quick path `{quick}`")
         uid, quick, long, url = v
@@ -340,12 +341,13 @@ class _rtfm(commands.Cog):
                 await user.send(f"Your request for Documentation `{quick}` has been denied. reason: `{reason}`")
             except discord.Forbidden:
                 await ctx.send("Users DMs are blocked. Can't dm approval")
-        await self.db.execute("DELETE FROM waiting WHERE quick IS ?", quick)
+
+        await self.db.execute("DELETE FROM waiting WHERE quick = $1", quick)
 
     @rtfm.command(hidden=True)
     @commands.is_owner()
     async def remove(self, ctx, quick: str):
-        await self.db.execute("DELETE FROM pages WHERE quick IS ?", quick)
+        await self.db.execute("DELETE FROM pages WHERE quick = $1", quick)
         if quick in self.pages:
             del self.pages[quick]
             return await ctx.send(f"removed `{quick}` from rtfm")
@@ -356,13 +358,13 @@ class _rtfm(commands.Cog):
     @list.before_invoke
     async def rtfm_pre(self, ctx):
         if not self.defaults:
-            v = await self.db.fetchall("SELECT * FROM default_rtfm")
-            for gid, default in v:
-                self.defaults[gid] = default
+            v = await self.db.fetch("SELECT * FROM default_rtfm")
+            for record in v:
+                self.defaults[record['guild_id']] = record['name']
             await self.build_rtfm_lookup_table(None) # caches all the pages
 
     @commands.command()
-    async def rtfs(self, ctx, search):
+    async def rtfs(self, ctx, search: commands.clean_content(escape_markdown=False)):
         """
         gets the source for an object from the discord.py library
         """
@@ -386,7 +388,7 @@ class _rtfm(commands.Cog):
                     last_get = get
                     get = getattr(get, i, None)
                     if get is None and last_get is None:
-                        return await ctx.send(f"Nothing found under ")
+                        return await ctx.send(f"Nothing found under `{raw_search}`")
                     elif get is None:
                         overhead = f"Couldn't find `{i}` under `{last_get.__name__}`, showing source for `{last_get.__name__}`\n\n"
                         get = last_get

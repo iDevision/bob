@@ -6,11 +6,11 @@ __all__ = [
     "check_moderator",
     "check_editor",
     "check_manager",
-    "check_streamer",
     "check_admin",
     "check_owners",
     "basic_check",
     "check_module",
+    "check_guild_owner",
     "MissingRequiredRole",
     "RoleDoesNotExist",
     ]
@@ -22,8 +22,6 @@ class RoleDoesNotExist(commands.CheckFailure):
 
 class MissingRequiredRole(RoleDoesNotExist): pass
 
-all_powerful_users = [547861735391100931, 467778673995415554]
-
 
 async def basic_check(ctx, mode, higher="editor"):
     if await ctx.bot.is_owner(ctx.author):
@@ -31,16 +29,14 @@ async def basic_check(ctx, mode, higher="editor"):
     if ctx.author.guild_permissions.administrator:
         return True
     try:
-        with ctx.bot.db:
-            v = ctx.bot.guild_role_states[ctx.guild.id][mode]
-            role = ctx.guild.get_role(v)
-            v = ctx.bot.guild_role_states[ctx.guild.id][higher]
+        v = ctx.bot.guild_role_states[ctx.guild.id][mode]
+        role = ctx.guild.get_role(v)
+        v = ctx.bot.guild_role_states[ctx.guild.id][higher]
         higherrole = ctx.guild.get_role(v)
         if not role:
-            raise RoleDoesNotExist(f"the role id `{role}` does not exist in your guild. "
-                                   "The role may have been deleted, or no role was ever created/assigned.")
+            raise RoleDoesNotExist(f"The {mode} role could not be found. Are you sure you have a role set up for that?")
         if role not in ctx.author.roles and higherrole not in ctx.author.roles:
-            raise MissingRequiredRole(f"You need the `Moderator` role ({role.name}) or higher to use this command")
+            raise MissingRequiredRole(f"You need the `{mode}` role ({role.name}) or higher to use this command")
         return True
     except (RoleDoesNotExist, MissingRequiredRole):
         raise
@@ -54,14 +50,21 @@ def check_admin():
         raise MissingRequiredRole("You need to be a server admin to use this command!")
     return commands.check(check)
 
+def check_guild_owner():
+    async def check(ctx):
+        if await ctx.bot.is_owner(ctx.author) or ctx.guild.owner.id == ctx.author.id:
+            return True
+        raise MissingRequiredRole("You need to be the server owner to use this command!")
+    return commands.check(check)
+
 def check_owners():
     async def check(ctx):
-        if ctx.author.id not in all_powerful_users:
+        if ctx.author.id not in ctx.bot.owner_ids:
             raise MissingRequiredRole("You wish. this is owner only.")
     return commands.check(check)
 
 def is_owner(user):
-    return user.id in all_powerful_users
+    return False
 
 def check_moderator():
     async def check(ctx):
@@ -76,7 +79,7 @@ def check_moderator():
         if role not in ctx.author.roles and higherrole not in ctx.author.roles:
             raise MissingRequiredRole(f"You need the `Moderator` role ({role.name}) or higher to use this command")
         return True
-    
+
     return commands.check(check)
 
 
@@ -86,11 +89,10 @@ def check_editor():
             return True
         if ctx.author.guild_permissions.administrator:
             return True
-        role = await ctx.bot.db.fetch("SELECT moderator FROM roles WHERE guild_id IS ?", ctx.guild.id)
+        role = ctx.bot.guild_role_states[ctx.guild.id]['moderator']
         role = ctx.guild.get_role(role)
         if not role:
-            raise RoleDoesNotExist(f"the role id `{role}` does not exist in your guild. "
-            "The role may have been deleted, or no role was ever created/assigned.")
+            raise RoleDoesNotExist(f"The Editor role could not be found. Are you sure you have a role set up for that?")
         if role not in ctx.author.roles:
             raise MissingRequiredRole(f"You need the `Bot Editor` role ({role.name}) or higher to use this command")
         return True
@@ -107,28 +109,9 @@ def check_manager():
         role = ctx.guild.get_role(a)
         higherrole = ctx.guild.get_role(b)
         if not role:
-            raise RoleDoesNotExist(f"the role id `{role}` does not exist in your guild. "
-            "The role may have been deleted, or no role was ever created/assigned.")
+            raise RoleDoesNotExist(f"The Community Manager role could not be found. Are you sure you have a role set up for that?")
         if role not in ctx.author.roles and higherrole not in ctx.author.roles:
             raise MissingRequiredRole(f"You need the `Community Manager` role ({role.name}) or higher to use this command")
-        return True
-    return commands.check(check)
-
-def check_streamer():
-    async def check(ctx):
-        if await ctx.bot.is_owner(ctx.author):
-            return True
-        if ctx.author.guild_permissions.administrator:
-            return True
-        role, role2, role3 = ctx.bot.db.fetchrow("SELECT streamer, editor, manager FROM roles WHERE guild_id IS ?", ctx.guild.id)
-        role = ctx.guild.get_role(role)
-        higherrole = ctx.guild.get_role(role2)
-        higherrole2 = ctx.guild.get_role(role3)
-        if not role:
-            raise RoleDoesNotExist(f"the role id `{role}` does not exist in your guild. "
-            "The role may have been deleted, or no role was ever created/assigned.")
-        if role not in ctx.author.roles and higherrole not in ctx.author.roles and higherrole2 not in ctx.author.roles:
-            raise MissingRequiredRole(f"You need the `Streamer` role ({role.name}) or higher to use this command")
         return True
     return commands.check(check)
 
