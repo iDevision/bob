@@ -13,7 +13,7 @@ import logging
 import tabulate
 from discord.ext import tasks
 
-from utils import checks, errors, commands, paginator, objects
+from utils import checks, errors, commands, paginator, objects, btime as timeutil
 from utils.objects import HOIST_CHARACTERS
 import inspect
 # run these now, because the first calls made to these return nothing useful.
@@ -351,6 +351,7 @@ class MyCog(commands.Cog):
         self.bot = bot
         self.loop_messages.start()
         self.save_ws_latency.start()
+        self.downtime = None
 
     def cog_unload(self):
         self.loop_messages.cancel()
@@ -427,11 +428,7 @@ class MyCog(commands.Cog):
         # next, build the tables for the guilds joined during downtime (if any).
         for guild in self.bot.guilds:
             if guild.id not in self.bot.guild_prefixes:
-                # all the cogs have their own on_guild_join method for creating new database rows.
-                print("dispatching on_guild_join for server: "+str(guild.name))
-                self.bot.dispatch("guild_join", guild, False) # im assuming if the prefix isnt there that nothing is there
-                self.bot.guild_prefixes[guild.id] = ["!"]
-                continue
+                self.bot.guild_prefixes[guild.id] = []
 
             if guild.id not in self.bot.guild_module_states:
                 mods = await self.bot.pg.fetchrow("INSERT INTO modules VALUES ($1, $2) RETURNING *", guild.id,
@@ -453,6 +450,13 @@ class MyCog(commands.Cog):
     @commands.Cog.listener()
     async def on_disconnect(self):
         print(f"{time.ctime()}: disconnected from discord")
+        self.downtime = datetime.datetime.utcnow()
+
+    @commands.Cog.listener()
+    async def on_connect(self):
+        if self.downtime is not None:
+            status_channel = self.bot.get_channel(629167007807438858)
+            await status_channel.send(f"Back online, downtime: {timeutil.human_timedelta(datetime.datetime.utcnow(), source=self.downtime)}")
 
     @commands.Cog.listener()
     async def on_shard_ready(self, shard_id: int):

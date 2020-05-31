@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import difflib
+import typing
 
 import discord
 
@@ -37,28 +38,44 @@ class TagName(commands.clean_content):
         return converted if not self.lower else lower
 
 
-async def has_tag_edit_perm(c, ctx, tag):
+async def has_tag_edit_perm(ctx, tag, owner_id):
     try:
         if await basic_check(ctx, "moderator", "editor"):
             return True
-    except: pass
-    owner = await c.db.fetch("SELECT owner FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, tag)
-    if ctx.author.id == owner:
+    except:
+        pass
+
+    if ctx.author.id == owner_id:
         return True
+
     return False
 
 
 class _tags(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = db.Database("tags")
 
-    @commands.command()
+    @commands.group()
     @commands.guild_only()
     @check_module("tags")
-    async def tags(self, ctx, user: commands.Member=None):
-        await self.list.can_run(ctx)
-        await self.list(ctx, user)
+    async def tags(self, ctx, user: typing.Union[commands.Member, int]=None):
+        await self._list(ctx, user)
+
+    @tags.command("list")
+    @commands.guild_only()
+    @check_module('tags')
+    async def _list(self, ctx, user: typing.Union[commands.Member, int]=None):
+        if not user:
+            user = ctx.author
+        if isinstance(user, int):
+         user = commands.Object(id=user)
+
+        tags = await self.bot.pg.fetch("SELECT name FROM tags WHERE guild_id = $1 AND owner = $2", ctx.guild.id, user.id)
+        if not tags:
+            return await ctx.send(f"{user} has no tags!")
+
+        v = [t['name'] for t in tags]
+        await ctx.paginate(v)
 
     @commands.group(invoke_without_command=True)
     @commands.guild_only()
@@ -70,77 +87,61 @@ class _tags(commands.Cog):
         tags can be created with the `tag create` command.
         """
         if searchtag is None:
-            return await ctx.send("not enough data")
-        match = await self.db.fetchrow("SELECT name, response, uses FROM tags WHERE guild_id IS ? and name IS ?", ctx.guild.id, searchtag)
+            return await ctx.send_help(ctx.command)
+
+        match = await self.bot.pg.fetchval("UPDATE tags SET uses=uses+1 WHERE guild_id = $1 AND name = $2 RETURNING response",ctx.guild.id, searchtag)
+
         if match:
-            await ctx.send(match[1])
-            await self.db.execute("UPDATE tags SET uses=? WHERE guild_id IS ? AND name IS ?", match[2]+1, ctx.guild.id, match[0])
+            await ctx.send(match)
+
         else:
-            cur = await self.db.execute("SELECT name FROM tags WHERE guild_id IS ?", ctx.guild.id)
-            names = await cur.fetchall()
-            loop = asyncio.get_running_loop()
+            names = await self.bot.pg.fetch("SELECT name FROM tags WHERE guild_id = $1", ctx.guild.id)
+            names = [x['name'] for x in names]
+
             def func():
                 return difflib.get_close_matches(searchtag, names, 5)
-            names = await loop.run_in_executor(None, func)
+            names = await self.bot.loop.run_in_executor(None, func)
             if names:
                 e = discord.Embed(color=discord.Colour.from_rgb(54, 57, 62))
-                e.title = f"tag not found. maybe you meant one of these?"
+                e.title = "tag not found. maybe you meant one of these?"
                 e.description ="``"+ "``\n``".join(names) + "``"
-                await ctx.send(embed=e)
-                return
-            await ctx.send(f"{ctx.author.mention} --> that tag does not exist!")
+                return await ctx.send(embed=e)
 
-    @tag.command()
-    @commands.guild_only()
-    @check_module('tags')
-    async def list(self, ctx, user: commands.Member=None):
-        if user is None:
-            tags = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ?", ctx.guild.id)
-            v = [t[0] for t in tags]
-            await ctx.paginate(v)
-
-        else:
-            tags = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ? AND owner IS ?", ctx.guild.id, user.id)
-            if not tags:
-                return await ctx.send(f"{user} has no tags!")
-
-            v = [t[0] for t in tags]
-            await ctx.paginate(v, )
+            await ctx.send("that tag does not exist!")
 
     @tag.command(aliases=["add", "make"], usage="<name> [response]")
     @commands.guild_only()
     @check_module('tags')
     async def create(self, ctx: commands.Context, name: TagName, *, resp: commands.clean_content=None):
-        exists = await self.db.fetchrow("SELECT * FROM tags WHERE name IS ? AND guild_id IS ?", name, ctx.guild.id)
-        if exists:
-            return await ctx.send(f"{ctx.author.mention} --> that tag already exists!")
         if not resp:
-            def check(m):
-                return m.author == ctx.author and m.channel == ctx.channel
-            await ctx.send(f"{ctx.author.mention} --> ok, so the tag is named `{name}`. what should the content be?")
-            try:
-                msg = await self.bot.wait_for("message", check=check, timeout=120)
-            except asyncio.TimeoutError:
-                return await ctx.send("time limit reached. aborting.")
-            if msg.content == ctx.prefix+"cancel":
-                return await ctx.send(f"{ctx.author.mention} --> aborting")
-            resp = await commands.clean_content().convert(ctx, msg.content)
-        await self.db.execute("INSERT INTO tags VALUES (?,?,?,?,?)", ctx.guild.id, name, resp, ctx.author.id, 0)
-        await ctx.send(f"{ctx.author.mention} --> created tag {name}")
+            resp = await ctx.ask(f"creating tag `{name}`. what should the content be? (type {ctx.prefix}cancel to cancel)", return_bool=False, timeout=60)
+            if resp.startswith(ctx.prefix + "cancel"):
+                return await ctx.send("cancelling.")
+
+            resp = await commands.clean_content().convert(ctx, resp)
+
+        try:
+            await self.bot.pg.execute("INSERT INTO tags VALUES ($1,$2,$3,$4,0)", ctx.guild.id, name, resp, ctx.author.id)
+        except:
+            return await ctx.send("that tag already exists.")
+
+        await ctx.send(f"created tag {name}")
 
 
     @tag.command(aliases=["delete", "rm", "del"], usage="<name>")
     @commands.guild_only()
     @check_module('tags')
     async def remove(self, ctx, name: TagName):
-        v = await self.db.fetchrow("SELECT * FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
-        if v and await has_tag_edit_perm(self, ctx, name):
-            await self.db.execute("DELETE FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
-            await ctx.send(f"{ctx.author.mention} --> successfully removed tag `{name}`")
-        elif v and not await has_tag_edit_perm(self, ctx, name):
-            await ctx.send(f"{ctx.author.mention} --> you cannot delete that tag! It does not belong to you!")
+        v = await self.bot.pg.fetchrow("SELECT * FROM tags WHERE guild_id = $1 AND name = $2", ctx.guild.id, name)
+        if v and await has_tag_edit_perm(ctx, name, v['owner']):
+            await self.bot.pg.execute("DELETE FROM tags WHERE guild_id = $1 AND name = $2", ctx.guild.id, name)
+            await ctx.send(f"successfully removed tag `{commands.utils.escape_markdown(name)}`")
+
+        elif v and not await has_tag_edit_perm(ctx, name, v['owner']):
+            await ctx.send("that tag isn't yours to delete")
+
         else:
-            await ctx.send(f"{ctx.author.mention} --> that tag does not exist!")
+            await ctx.send("that tag does not exist")
 
 
     @tag.command(aliases=["?"], usage="<tag name>")
@@ -151,13 +152,19 @@ class _tags(commands.Cog):
         shows info about a tag.
         this includes things like the owner and how many times the tag has been used.
         """
-        data = await self.db.fetchrow("SELECT * FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
+        data = await self.bot.pg.fetchrow("SELECT * FROM tags WHERE guild_id = $1 AND name = $2", ctx.guild.id, name)
         if not data:
-            return await ctx.send(f"{ctx.author.mention} --> that tag does not exist!")
-        e = discord.Embed(color=discord.Color.blurple())
-        e.add_field(name="Owner", value=str(ctx.guild.get_member(data[3])))
+            return await ctx.send("That tag does not exist")
+
+        e = ctx.embed_invis()
+        owner = ctx.guild.get_member(data['owner']) or data['owner']
+        e.add_field(name="Owner", value=str(owner))
         e.add_field(name="Uses", value=data[4])
-        e.set_author(name=str(ctx.author), icon_url=ctx.author.avatar_url)
+        if not isinstance(owner, int):
+            e.set_author(name=str(owner), icon_url=owner.avatar_url)
+        else:
+            e.set_author(name=str(owner))
+
         e.timestamp = datetime.datetime.utcnow()
         await ctx.send(embed=e)
 
@@ -168,14 +175,14 @@ class _tags(commands.Cog):
         """
         allows you to edit a tag you own.
         """
-        if not resp:
-            return await ctx.send(f"No content to edit with")
-        v = await self.db.fetchrow("SELECT * FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
-        if v and await has_tag_edit_perm(self, ctx, name):
-            await self.db.execute("UPDATE tags SET response=? WHERE guild_id IS ? AND name=?", resp, ctx.guild.id, name)
+
+        v = await self.bot.pg.fetchrow("SELECT * FROM tags WHERE guild_id = $1 AND name = $2", ctx.guild.id, name)
+
+        if v and await has_tag_edit_perm(ctx, name, v['owner']):
+            await self.bot.pg.execute("UPDATE tags SET response = $1 WHERE guild_id = $2 AND name=$3", resp, ctx.guild.id, name)
             await ctx.send(f"Updated tag `{name}`")
-        else:
-            await ctx.send("Tag does not exist or you do not have permission to edit it.")
+        elif v:
+            await ctx.send("that tag is not yours to edit")
 
     @tag.command(usage="<tag name>")
     @commands.guild_only()
@@ -184,15 +191,16 @@ class _tags(commands.Cog):
         """
         allows you to claim a tag made by someone who is no longer in the server
         """
-        data = await self.db.fetchrow("SELECT * FROM tags WHERE guild_id IS ? AND name IS ?", ctx.guild.id, name)
+        data = await self.bot.pg.fetchrow("SELECT * FROM tags WHERE guild_id = $1 AND name = $2", ctx.guild.id, name)
         if not data:
-            return await ctx.send(f"{ctx.author.mention} --> that tag does not exist!")
-        owner = ctx.guild.get_member(data[3])
+            return await ctx.send("that tag does not exist")
+
+        owner = ctx.guild.get_member(data['owner'])
         if owner is None:
-            await self.db.execute("UPDATE tags SET owner = ? WHERE guild_id IS ? AND name IS ?", ctx.author.id, ctx.guild.id, name)
-            await ctx.send(f"{ctx.author.mention} --> claimed tag {name}")
+            await self.bot.pg.execute("UPDATE tags SET owner = $1 WHERE guild_id = $2 AND name = $3", ctx.author.id, ctx.guild.id, name)
+            await ctx.send(f"claimed tag `{name}`")
         else:
-            await ctx.send(f"{ctx.author.mention} --> that tag already has an owner! ({owner})")
+            await ctx.send(f"that tag already has an owner ({owner})")
     
     @tag.command(usage="<tag name>")
     @commands.guild_only()
@@ -201,13 +209,14 @@ class _tags(commands.Cog):
         """
         preforms a search of your servers tags.
         """
-        names = await self.db.fetchall("SELECT name FROM tags WHERE guild_id IS ?", ctx.guild.id)
-        loop = asyncio.get_running_loop()
+        names = await self.bot.pg.fetch("SELECT name FROM tags WHERE guild_id = $1", ctx.guild.id)
+        names = [tag['name'] for tag in names]
         def func():
             return difflib.get_close_matches(name, names, 15)
-        names = await loop.run_in_executor(None, func)
+
+        names = await self.bot.loop.run_in_executor(None, func)
         if not names:
             return await ctx.send("no matches found")
-        pages = paginator.Pages(ctx, entries=names, per_page=5, embed_color=discord.Color.teal())
-        await pages.paginate()
+
+        await ctx.paginate(names)
 

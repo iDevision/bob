@@ -24,9 +24,6 @@ class _CustomCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def cog_check(self, ctx):
-        raise commands.CheckFailure("Custom Commands are currently disabled")
-
     async def parse(self, ctx, view: StringView, string: str) -> str:
         params = ""
         if view.eof:
@@ -78,7 +75,7 @@ class _CustomCommands(commands.Cog):
 
         else:
             if args.skip_string(prefs):
-                return
+                v = True
 
         if not v:
             return
@@ -95,7 +92,7 @@ class _CustomCommands(commands.Cog):
         await message.channel.send(v)
 
     async def guild_commands(self, guild):
-        l = await self.bot.bridge.fetch("SELECT name FROM commands WHERE guild_id=$1;", guild.id)
+        l = await self.bot.pg.fetch("SELECT name FROM commands WHERE guild_id=$1;", guild.id)
         ret = ""
         for i in l:
             ret += f"- {i['name']}\n"
@@ -104,7 +101,7 @@ class _CustomCommands(commands.Cog):
 
     @commands.group(invoke_without_command=True, aliases=['customcommands', "commands"])
     @commands.guild_only()
-    @commands.check_module("customcommands")
+    @commands.check_module("commands")
     async def command(self, ctx: commands.Context):
         """
         you need the `Bot Editor` role to edit this category. call without arguments for a list of your server's commands.
@@ -135,12 +132,12 @@ class _CustomCommands(commands.Cog):
         """
 
     @command.command(aliases=['show'])
-    @commands.check_module("customcommands")
+    @commands.check_module("commands")
     async def raw(self, ctx, cmd):
         """
         show the command without any argument parsing
         """
-        v = await self.bot.bridge.fetchval("SELECT content FROM commands WHERE guild_id=$1 AND name=$2", ctx.guild.id, cmd)
+        v = await self.bot.pg.fetchval("SELECT content FROM commands WHERE guild_id=$1 AND name=$2", ctx.guild.id, cmd)
         if v is None:
             return await ctx.send("That command does not exist")
 
@@ -148,7 +145,7 @@ class _CustomCommands(commands.Cog):
 
     @command.command(aliases=["add"], usage="<command name> [command response]")
     @check_editor()
-    @commands.check_module("customcommands")
+    @commands.check_module("commands")
     async def create(self, ctx, name: str, *, response: str):
         """
         create a new custom command.
@@ -158,19 +155,19 @@ class _CustomCommands(commands.Cog):
         if name in self.bot.all_commands:
             return await ctx.send("that command is reserved by built in commands!")
 
-        await self.bot.bridge.execute("INSERT INTO commands VALUES ($1,$2,$3,$4,$5)", ctx.guild.id, name, response, 0, 0)
-        return await ctx.send(f"{ctx.author.mention} --> added command {name}")
+        await self.bot.pg.execute("INSERT INTO commands VALUES ($1,$2,$3,$4,$5)", ctx.guild.id, name, response, 0, 0)
+        return await ctx.send(f"{ctx.author.mention}, added command {name}")
 
     @command.command(usage="<command name> <command response>")
     @check_editor()
-    @commands.check_module("customcommands")
+    @commands.check_module("commands")
     async def edit(self, ctx, name: str, *, response: str):
         """
         edits an already existing custom command.
         requires the `bot editor` role or higher.
         """
 
-        if await self.bot.bridge.execute("UPDATE commands SET response = $1 WHERE guild_id = $2 AND name=$3 RETURNING *;",
+        if await self.bot.pg.execute("UPDATE commands SET content = $1 WHERE guild_id = $2 AND name=$3 RETURNING *;",
                                      response, ctx.guild.id, name):
             await ctx.send(f"updated command `{name}`")
 
@@ -185,7 +182,7 @@ class _CustomCommands(commands.Cog):
         requires the `bot editor` role or higher.
         """
         query = "DELETE FROM commands WHERE guild_id=$1 AND name=$2 RETURNING *;"
-        p = await self.bot.bridge.fetch(query, ctx.guild.id, name)
+        p = await self.bot.pg.fetch(query, ctx.guild.id, name)
         if p:
             await ctx.send(f"Removed command {name}")
 
