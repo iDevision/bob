@@ -1,8 +1,8 @@
-import calendar
 import datetime
 import os
 import sys
 import time
+import collections
 import traceback
 
 import discord
@@ -351,11 +351,13 @@ class MyCog(commands.Cog):
         self.bot = bot
         self.loop_messages.start()
         self.save_ws_latency.start()
+        self.post_stats.start()
         self.downtime = None
 
     def cog_unload(self):
         self.loop_messages.cancel()
         self.save_ws_latency.cancel()
+        self.post_stats.cancel()
 
     @tasks.loop(minutes=1)
     async def save_ws_latency(self):
@@ -531,3 +533,31 @@ class MyCog(commands.Cog):
             if not any([x.hoist for x in after.roles]):
                 if after.display_name.startswith(HOIST_CHARACTERS):
                     await after.edit(nick="Hoister no hoisting")
+
+    @commands.Cog.listener()
+    async def on_socket_response(self, data: dict):
+        if not hasattr(self.bot, "counts"):
+            self.bot.counts = collections.Counter()
+        if data.get("t") is not None:
+            self.bot.counts[data['t']] += 1
+
+    @tasks.loop(seconds=60)
+    async def post_stats(self):
+        if not hasattr(self.bot, "counts"):
+            self.bot.counts = collections.Counter()
+
+        proc = psutil.Process()
+        with proc.oneshot():
+            mem = proc.memory_full_info()
+
+        payload = {
+            "metrics": {
+                a: b for a, b in self.bot.counts.items()
+            },
+            "usercount": len(self.bot.users),
+            "guildcount": len(self.bot.guilds),
+            "ramusage": round(mem.rss / 1048576),  # in mb
+            "latency": round(self.bot.latency*1000)  # in ms
+        }
+        await self.bot.session.post("https://idevision.net/api/bots/updates",
+                                    json=payload, headers={"Authorization": self.bot.settings['idevision_token']})
