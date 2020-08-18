@@ -497,6 +497,17 @@ class MyCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild, pres=True):
+        if len(self.bot.guilds) > 99 and pres:
+            for channel in guild.text_channels:
+                if channel.permissions_for(guild.me).send_messages:
+                    await channel.send("Hey there! thanks for inviting me! Unfortunately, due to discord's verification "
+                                       "limits, I cannot be added to more than 100 servers unless my owner doxxes himself. "
+                                       "Unfortunately, we are at that server cap, and I have to leave your server. Stay tuned, as alternatives may become available, to continue using bob. "
+                                       "Sorry for the inconvenience!")
+                    break
+
+            await guild.leave()
+
         self.bot.guild_prefixes[guild.id] = ["!"] if self.bot.run_bot != "BOB_ALPHA" else ["]"]
         self.bot.guild_role_states[guild.id] = {"editor": None, "muted": None, "moderator": None, "manager": None,
                                             "streamer": None}
@@ -559,5 +570,7 @@ class MyCog(commands.Cog):
             "ramusage": round(mem.rss / 1048576),  # in mb
             "latency": round(self.bot.latency*1000)  # in ms
         }
-        await self.bot.session.post("https://idevision.net/api/bots/updates",
+        v = await self.bot.session.post("https://idevision.net/api/bots/updates",
                                     json=payload, headers={"Authorization": self.bot.settings['idevision_token']})
+        if v.status != 200:
+            print(v)
