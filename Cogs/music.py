@@ -237,7 +237,7 @@ class music(commands.Cog):
 
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
-        if player.is_connected:
+        if player.is_connected and ctx.guild.me.voice is not None:
             if ctx.author.voice.channel == ctx.guild.me.voice.channel:
                 return
 
@@ -301,7 +301,11 @@ class music(commands.Cog):
         if not RURL.match(query):
             query = f'ytsearch:{query}'
 
-        tracks = await self.bot.wavelink.get_tracks(query)
+        try:
+            tracks = await self.bot.wavelink.get_tracks(query)
+        except KeyError:
+            tracks = None
+
         if not tracks:
             await ctx.send('No songs were found with that query. Please try again.')
             return None, None
@@ -330,7 +334,8 @@ class music(commands.Cog):
     @check_no_automusic()
     @check_in_voice()
     async def pause_(self, ctx):
-        """Pause the currently playing song.
+        """
+        Pause the currently playing song.
         """
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
         if not player:
@@ -355,7 +360,8 @@ class music(commands.Cog):
     @check_no_automusic()
     @check_in_voice()
     async def resume_(self, ctx):
-        """Resume a currently paused song.
+        """
+        Resume a currently paused song.
         """
         player = self.bot.wavelink.get_player(ctx.guild.id, cls=Player)
 
@@ -386,6 +392,9 @@ class music(commands.Cog):
         if await self.has_perms(ctx, manage_guild=True):
             await ctx.send(f'{ctx.author.mention} has skipped the song as an admin or DJ.', delete_after=25)
             return await self.do_skip(ctx)
+
+        if not player.current:
+            return await ctx.send("Nothing is currently playing")
 
         if player.current.requester.id == ctx.author.id:
             await ctx.send(f'The requester {ctx.author.mention} has skipped the song.')
@@ -427,9 +436,6 @@ class music(commands.Cog):
     @check_in_voice()
     async def volume_(self, ctx, *, value: int):
         """Change the player volume.
-        Aliases
-        ---------
-            vol
         Parameters
         ------------
         value: [Required]
@@ -457,10 +463,6 @@ class music(commands.Cog):
     @checker()
     async def queue_(self, ctx):
         """Retrieve a list of currently queued songs.
-        Aliases
-        ---------
-            que
-            q
         Examples
         ----------
         <prefix>queue
@@ -493,9 +495,6 @@ class music(commands.Cog):
     @check_no_automusic()
     async def shuffle_(self, ctx):
         """Shuffle the current queue.
-        Aliases
-        ---------
-            mix
         Examples
         ----------
         <prefix>shuffle
@@ -730,10 +729,11 @@ class music(commands.Cog):
         if not tracks:
             return await ctx.send("Invalid playlist")
 
-        await self.bot.pg.execute("INSERT INTO music_loopers VALUES ($1,$2,$3,$4,$5) ON CONFLICT UPDATE music_loopers "
-                                  "SET playlist=$4, vc_id=$2, tc_id=$3 WHERE guild_id=$1;", ctx.guild.id,
+        await self.bot.pg.execute("INSERT INTO music_loopers VALUES ($1,$2,$3,$4,$5) ON CONFLICT (guild_id) DO UPDATE "
+                                  "SET playlist=$4, vc_id=$2, tc_id=$3 WHERE music_loopers.guild_id=$1;", ctx.guild.id,
                                   voice_channel.id, text_channel.id, playlist, False)
-        ctx.send(f"Your 24/7 music has been set up. To enable it, run `{ctx.prefix}247 enabled`")
+
+        await ctx.send(f"Your 24/7 music has been set up. To enable it, run `{ctx.prefix}247 enabled`")
 
     @twofortyseven.command("enable")
     @commands.check_editor()
@@ -748,7 +748,7 @@ class music(commands.Cog):
         await self.tfs_runner(ctx, False)
 
     async def tfs_runner(self, ctx, state: bool):
-        found = await self.bot.pg.fetch("UPDATE music_loopers SET enabled=$1 WHERE guild_id = $2 RETURNING guild_id, vc_id, tc_id, playlist;",
+        found = await self.bot.pg.fetchrow("UPDATE music_loopers SET enabled=$1 WHERE guild_id = $2 RETURNING guild_id, vc_id, tc_id, playlist;",
                                         state, ctx.guild.id)
 
         if not found:
@@ -756,8 +756,6 @@ class music(commands.Cog):
 
         else:
             await ctx.send(f"{'Enabled' if state else 'Disabled'} 24/7 music")
-
-        found = found[0]
 
         if state:
             self.always_plays[ctx.guild.id] = found['vc_id'], found['tc_id'], found['playlist']
