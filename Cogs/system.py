@@ -2,6 +2,7 @@ import datetime
 import os
 import sys
 import time
+import io
 import collections
 import traceback
 
@@ -11,6 +12,7 @@ import psutil
 import typing
 import logging
 import tabulate
+import aiohttp
 from discord.ext import tasks
 
 from utils import checks, errors, commands, paginator, objects, btime as timeutil
@@ -47,6 +49,7 @@ def setup(bot):
     bot.on_command_error = on_command_error
     bot.add_cog(MyCog(bot))
     bot.add_cog(SystemCog(bot))
+    bot.add_cog(Idevision(bot))
 
 class SystemCog(commands.Cog, command_attrs=dict(hidden=True)):
     def __init__(self, bot):
@@ -574,3 +577,200 @@ class MyCog(commands.Cog):
                                     json=payload, headers={"Authorization": self.bot.settings['idevision_token']})
         if v.status != 200:
             print(v)
+v = {
+    "link1": "https://github.com/",
+    "link1_name": "Github",
+    "link2": "https://metrics.idevision.net",
+    "link2_name": "Idevision",
+    "link3": "https://twitch.tv",
+    "link3_name": "Twitch",
+    "link4": "https://youtube.com",
+    "link4_name": "Youtube"
+}
+class Idevision(commands.Cog):
+    url = "https://idevision.net/api/"
+    users = {
+        "xua": (455289384187592704, 504481110437265411),
+        "dutchy": (171539705043615744,),
+        "random": (238356301439041536, 718259605523660870),
+        "tom": (753019160610472038, 547861735391100931),
+        "zomatree": (285130711348805632, )
+        }
+    def __init__(self, bot):
+        self.bot = bot
+        self.session = aiohttp.ClientSession(headers={"Authorization": bot.settings['idevision_token']})
+
+    @commands.group(aliases=["id"])
+    async def idevision(self, ctx):
+        pass
+
+    @idevision.group()
+    @commands.is_owner()
+    async def users(self, ctx):
+        pass
+
+    @users.command()
+    @commands.is_owner()
+    async def add(self, ctx, username: str, password: str, *routes):
+        async with self.session.post(self.url + "users/manage",
+                                     json={"username": username, "authorization": password, "routes": routes}) as resp:
+            if 200 <= resp.status < 300:
+                await ctx.send("User has been added")
+
+            elif resp.reason:
+                await ctx.send(f"Failed: ({resp.status})" + resp.reason)
+
+            else:
+                await ctx.send("Failed. " + str(resp.status))
+
+    @users.command()
+    @commands.is_owner()
+    async def remove(self, ctx, username: str):
+        async with self.session.post(self.url + "users/manage",
+                                     json={"username": username}) as resp:
+            if 200 <= resp.status < 300:
+                await ctx.send("User has been removed")
+
+            elif resp.reason:
+                await ctx.send(f"Failed: ({resp.status})" + resp.reason)
+
+            else:
+                await ctx.send("Failed. " + str(resp.status))
+
+    @users.command()
+    @commands.is_owner()
+    async def deauth(self, ctx, username: str):
+        async with self.session.post(self.url + "users/deauth", json={"username": username}) as resp:
+            if 200 <= resp.status < 300:
+                await ctx.send("User has been deauthed")
+
+            elif resp.reason:
+                await ctx.send(f"Failed: ({resp.status})" + resp.reason)
+
+            else:
+                await ctx.send("Failed. " + str(resp.status))
+
+    @users.command()
+    @commands.is_owner()
+    async def reauth(self, ctx, username: str):
+        async with self.session.post(self.url + "users/auth", json={"username": username}) as resp:
+            if 200 <= resp.status < 300:
+                await ctx.send("User has been reauthed")
+
+            elif resp.reason:
+                await ctx.send(f"Failed: ({resp.status})" + resp.reason)
+
+            else:
+                await ctx.send("Failed. " + str(resp.status))
+
+    @idevision.group()
+    @commands.is_owner()
+    async def cdn(self, ctx):
+        pass
+
+    @cdn.command()
+    @commands.is_owner()
+    async def stats(self, ctx):
+        async with self.session.get(self.url + "media/stats") as resp:
+            if 200 <= resp.status < 300:
+                data = await resp.json()
+                await ctx.send(f"Image count: {data['upload_count']}. "
+                               f"Most recent: <https://cdn.idevision.net/{data['last_upload']}>")
+
+            else:
+                await ctx.send(f"fetching from the api failed: {resp.reason}")
+
+    @cdn.command()
+    @commands.is_owner()
+    async def userstats(self, ctx, user: str):
+        async with self.session.get(self.url + "media/stats/user", json={"username": user}) as resp:
+            if 200 <= resp.status < 300:
+                data = await resp.json()
+                await ctx.send(f"Image count: {data['upload_count']}. "
+                               f"Most recent: <{data['last_upload']}>")
+            else:
+                await ctx.send(f"fetching from the api failed: {resp.reason}")
+
+    @cdn.command()
+    @commands.is_owner()
+    async def purge(self, ctx, user: str):
+        async with self.session.delete(self.url + "media/purge", json={"username": user}) as resp:
+            if 200 <= resp.status < 300:
+                await ctx.send(f"Purged {user}'s images")
+            else:
+                await ctx.send(f"Failed to purge: {resp.reason}")
+
+    @cdn.command()
+    @commands.is_owner()
+    async def upload(self, ctx: commands.Context):
+        msg: commands.Message = ctx.message
+        if not msg.attachments:
+            return await ctx.send("Provide an attachment")
+
+        fp = io.BytesIO()
+        await msg.attachments[0].save(fp)
+
+        data = aiohttp.FormData()
+        data.add_field('file',
+                       fp,
+                       filename=msg.attachments[0].filename)
+
+        async with self.session.post(self.url + "media/post", data=data) as resp:
+            if 200 <= resp.status < 300:
+                d = await resp.json()
+                return await ctx.send(f"Uploaded {msg.attachments[0].filename} to the cdn, at {d['url']}")
+
+            else:
+                await ctx.send(f"There was an error uploading the file: ({resp.status}) {resp.reason}")
+
+    @cdn.command()
+    async def delete(self, ctx: commands.Context, image: str):
+        if not "." in image:
+            return ctx.send("Invalid image")
+
+        async with self.session.get("https://idevision.net/api/media/images/" + image) as resp:
+            if resp.status == 404:
+                return await ctx.send("Image not found")
+
+            data = await resp.json()
+            user = data['username']
+
+        authed = False
+
+        if ctx.author.id in self.users['tom']:
+            authed = True
+
+        elif user in self.users.get(user, set()):
+            authed = True
+
+        if not authed:
+            return await ctx.send("Not Authorized")
+
+        async with self.session.delete("https://idevision.net/api/media/images/" + image) as resp:
+            if resp.status == 204:
+                await ctx.send("Image deleted")
+
+            else:
+                await ctx.send("Failed to delete image")
+
+    @idevision.command()
+    @commands.check_any(commands.check(lambda ctx: ctx.guild.id == 711757140590723134), commands.is_owner())
+    async def homepage(self, ctx: commands.Context,
+                       display_name,
+                       link1="", link1name="",
+                       link2="", link2name="",
+                       link3="", link3name="",
+                       link4="", link4name=""):
+        resp = await self.session.post(self.url + "home/urls", json={
+            "display_name": display_name,
+            "user": ctx.author.name,
+            "link1": link1,
+            "link2": link2,
+            "link3": link3,
+            "link4": link4,
+            "link1_name": link1name,
+            "link2_name": link2name,
+            "link3_name": link3name,
+            "link4_name": link4name,
+        })
+        await ctx.send(f"Complete ({resp.status})")

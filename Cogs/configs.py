@@ -2,7 +2,7 @@ import datetime
 
 import discord
 
-from utils import db, commands, objects
+from utils import commands, objects
 from utils.checks import *
 
 
@@ -37,9 +37,11 @@ class settings(commands.Cog):
     category = "settings"
     def __init__(self, bot):
         self.bot = bot
-        self.db = db.Database("configs")
 
     async def cog_check(self, ctx):
+        if ctx.command.qualified_name == "prefix":
+            return True
+
         return await basic_check(ctx, "editor")
 
     @commands.command(aliases=["modules"])
@@ -79,7 +81,7 @@ class settings(commands.Cog):
             await ctx.send(f"toggled {module} to state {self.bot.guild_module_states[ctx.guild.id][module]}")
 
     @commands.group(invoke_without_command=True, usage="[config to assign] ...", aliases=['role'])
-    async def roles(self, ctx, *args):
+    async def roles(self, ctx):
         """
         allows you to edit the role assignment. useful if you already have existing roles.
         `Mod`, for example.
@@ -208,7 +210,7 @@ class settings(commands.Cog):
         if roles:
             v = ""
             for rid in roles:
-                r = ctx.guild.get_role(rid)
+                r = ctx.guild.get_role(rid['role_id'])
                 if r:
                     v += str(r)+"\n"
             e.add_field(name="current autoassign roles", value=v)
@@ -239,7 +241,7 @@ class settings(commands.Cog):
         """
         remove a role from being autoassigned
         """
-        v = await self.db.fetch("DELETE FROM role_auto_assign WHERE guild_id = $1 and role_id = $2 RETURNING *;", ctx.guild.id, role.id)
+        v = await self.bot.pg.fetch("DELETE FROM role_assign WHERE guild_id = $1 and role_id = $2 RETURNING *;", ctx.guild.id, role.id)
         if v:
             await ctx.send(f"Removed {role.name} from auto assign")
 

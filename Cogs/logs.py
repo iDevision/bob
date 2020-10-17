@@ -35,6 +35,9 @@ class logging(commands.Cog, command_attrs=dict(hidden=True)):
         return emb
 
     def get_state(self, guild)->objects.LoggingFlags:
+        if guild is None:
+            return None
+
         if guild.id not in self.states:
             return None
 

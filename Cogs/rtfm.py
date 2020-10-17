@@ -6,6 +6,12 @@ import zlib
 import datetime
 
 import discord
+import discord.http
+import discord.abc
+import discord.state
+import discord.webhook
+import discord.gateway
+import discord.raw_models
 from discord.ext import commands as _root_commands, tasks as _root_tasks
 
 from utils import checks, errors, paginator

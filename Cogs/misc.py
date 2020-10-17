@@ -6,7 +6,7 @@ import os
 import random
 import time
 import typing
-import uuid
+import multiprocessing
 
 import discord
 from discord.ext.commands import cooldown, BucketType
@@ -415,11 +415,12 @@ class misc(commands.Cog):
     async def ping(self, ctx: commands.Context):
         """ Pong! """
         before = time.monotonic()
-        message = await ctx.send("Pong")
+        await ctx.trigger_typing()
         ping = (time.monotonic() - before) * 1000
-        await message.edit(content=f"\U0001f3d3 Pong   |   {int(ping)}ms")
-        await async_ping(ctx, ping)
-        await message.delete()
+        try:
+            await multiprocess_image(ctx, ping)
+        except:
+            await ctx.send(f"\U0001f3d3 Pong   |   {int(ping)}ms")
 
     @commands.command(hidden=True)
     async def why(self, ctx):
@@ -526,12 +527,27 @@ Pick one."""]))
 
 import matplotlib.figure as plt
 
-async def async_ping(ctx, delay):
-    file = await ctx.bot.loop.run_in_executor(None, plot_ping, ctx.bot, delay)
-    return await ctx.send(file=file)
+async def multiprocess_image(ctx, delay):
+    q = multiprocessing.Queue()
+    proc = multiprocessing.Process(target=bytes_to_queue, daemon=True,
+                            args=(plot_ping, q, ctx.bot.pings, delay, ctx.bot.latency))
+    proc.start()
 
-def plot_ping(bot, delay):
-    if not bot.pings:
+    bytes = await asyncio.get_running_loop().run_in_executor(None, q.get)
+
+    proc.terminate()
+    await asyncio.get_running_loop().run_in_executor(None, proc.join)
+    proc.close()
+    v = discord.File(bytes, filename="ping.png")
+    await ctx.send(file=v)
+
+def bytes_to_queue(func, queue: multiprocessing.Queue, *args, **kwargs):
+    bytes = func(*args, **kwargs)
+    queue.put(bytes)
+
+
+def plot_ping(raw_pings, delay, lat):
+    if not raw_pings:
         raise commands.CommandError("No pings available.")
 
     fig = plt.Figure()
@@ -540,7 +556,7 @@ def plot_ping(bot, delay):
     pings = []
     times = []
     total_ping = 0
-    for time, latency in bot.pings:
+    for time, latency in raw_pings:
         if latency == float("nan"):
             continue
         pings.append(round(latency, 0))
@@ -554,12 +570,12 @@ def plot_ping(bot, delay):
 
     highest_ping, lowest_ping = hilo(pings)
 
-    average_ping = round(sum([ping if str(ping) != "nan" else 0 for _, ping in bot.pings ]) / len(bot.pings), 1)
+    average_ping = round(sum([ping if str(ping) != "nan" else 0 for ping in pings ]) / len(pings), 1)
     ax.plot(times, pings, markersize=0.0, linewidth=0.5, c="purple", alpha=1)
     ax.plot(times, pings, markevery=lowest_ping, c='lime', linewidth=0.0, marker='o', markersize=4)
     ax.plot(times, pings, markevery=highest_ping, c='red', linewidth=0.0, marker='o', markersize=4)
     ax.fill_between(range(0, len(pings)), [0 for _ in pings], pings, facecolor="purple", alpha=0.2)
-    ax.text(1, 1, f"Current gateway ping: {round(bot.latency * 1000, 1)} ms\nAverage Ping: {average_ping} ms\nMessage ping: {round(delay)}ms")
+    ax.text(1, 1, f"Current gateway ping: {round(lat * 1000, 1)} ms\nAverage Ping: {average_ping} ms\nMessage ping: {round(delay)}ms")
     ax.set(ylabel="Ping (MS)", xlabel="the last hour")
 
     ax.tick_params(
@@ -573,4 +589,4 @@ def plot_ping(bot, delay):
     fig.savefig(image)
     image.seek(0)
 
-    return discord.File(image, filename="ping.png")
+    return image

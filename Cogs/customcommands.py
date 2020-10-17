@@ -1,9 +1,14 @@
 import asyncio
 import random
+import traceback
+from typing import Optional
 
 import discord
+import viper
+from viper.exts import discord as pyk_discord
 from discord.ext.commands import converter
 from discord.ext.commands.view import StringView
+from jishaku.codeblocks import codeblock_converter
 
 from utils import argparse
 from utils import db, commands
@@ -37,6 +42,7 @@ class _CustomCommands(commands.Cog):
                 target = ctx.author
                 params += possible_target
             params += view.read_rest()
+
         parameters = {
             "$authormention": ctx.author.mention,
             "$authorid": str(ctx.author.id),
@@ -56,6 +62,23 @@ class _CustomCommands(commands.Cog):
             if i['name'] == "random":
                 ret += random.choice(i['params'])
         return ret
+
+    async def parse_script(self, ctx, view, script):
+        namespace = viper.VPNamespace()
+        safe_context = pyk_discord.SafeAccessContext(ctx)
+        namespace.buildmode(True)
+        namespace['ctx'] = safe_context
+        namespace['author'] = safe_context.author
+        namespace['channel'] = safe_context.channel
+
+        try:
+            await viper.eval(script, defaults={"say": safe_context.send}, namespace=namespace, file=f"GuildScript {ctx.guild.id}", safe=True)
+        except viper.VP_Error as e:
+            await ctx.send(f"__Your script has encountered an error:__\n" + discord.utils.escape_markdown(e.format_stack()))
+
+        except Exception as e:
+            await ctx.send(f"__Your script has encountered an error:__\n" + discord.utils.escape_markdown(traceback.format_exception(type(e), e, e.__traceback__)))
+
 
     @commands.Cog.listener("on_message")
     async def trigger(self, message: discord.Message):
@@ -83,13 +106,17 @@ class _CustomCommands(commands.Cog):
         com = args.get_word()
         args.skip_ws()
 
-        data = await self.bot.pg.fetchval("SELECT content FROM commands WHERE guild_id=$1 AND name=$2;", message.guild.id, com)
+        data = await self.bot.pg.fetchrow("SELECT content, is_script FROM commands WHERE guild_id=$1 AND name=$2;", message.guild.id, com)
         if not data:
             return
 
         ctx = await self.bot.get_context(message)
-        v = await self.parse(ctx, args, data)
-        await message.channel.send(v)
+        if not data['is_script']:
+            v = await self.parse(ctx, args, data['content'])
+            await message.channel.send(v)
+
+        else:
+            await self.parse_script(ctx, args, data['content'])
 
     async def guild_commands(self, guild):
         l = await self.bot.pg.fetch("SELECT name FROM commands WHERE guild_id=$1;", guild.id)
@@ -143,29 +170,36 @@ class _CustomCommands(commands.Cog):
 
         await ctx.send(v)
 
-    @command.command(aliases=["add"], usage="<command name> [command response]")
+    @command.command(aliases=["add"], usage="<command name> [is_script=No] <command response>")
     @check_editor()
     @commands.check_module("commands")
-    async def create(self, ctx, name: str, *, response: str):
+    async def create(self, ctx, name: str, is_script: Optional[bool], *, response: codeblock_converter):
         """
         create a new custom command.
         requires the `bot editor` role or higher.
         note that there is no sanitization on this. pings will remain, and will ping every time the command is used.
         """
+        if is_script is None:
+            is_script = False
+
+        response = response.content
+
         if name in self.bot.all_commands:
             return await ctx.send("that command is reserved by built in commands!")
 
-        await self.bot.pg.execute("INSERT INTO commands VALUES ($1,$2,$3,$4,$5)", ctx.guild.id, name, response, 0, 0)
+        await self.bot.pg.execute("INSERT INTO commands VALUES ($1,$2,$3,$4,$5,$6)",
+                                  ctx.guild.id, name, response, 0, 0, is_script)
         return await ctx.send(f"{ctx.author.mention}, added command {name}")
 
     @command.command(usage="<command name> <command response>")
     @check_editor()
     @commands.check_module("commands")
-    async def edit(self, ctx, name: str, *, response: str):
+    async def edit(self, ctx, name: str, *, response: codeblock_converter):
         """
         edits an already existing custom command.
         requires the `bot editor` role or higher.
         """
+        response = response.content
 
         if await self.bot.pg.execute("UPDATE commands SET content = $1 WHERE guild_id = $2 AND name=$3 RETURNING *;",
                                      response, ctx.guild.id, name):
