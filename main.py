@@ -111,14 +111,14 @@ class Bot(commands.Bot):
         self.run_bot_display = self.settings['run_display_name']
         self.run_server = self.settings['server']
         self.pg = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresdsn'])) #type: asyncpg.pool.Pool
-        #self.bridge = asyncio.get_event_loop().run_until_complete(asyncpg.create_pool(self.settings['postgresbridge'])) #type: asyncpg.pool.Pool
         self.counter = 0
         self.version = "unloaded"
         self.setup = False
-        commands.Bot.__init__(self, prefix, help_command, description=description, **settings)
+        commands.Bot.__init__(self, prefix, help_command, description=description, intents=discord.Intents.all(), **settings)
+        if 'owners' in self.settings:
+            self.owner_ids = self.settings['owners']
+
         self.__cogs = _CaseInsensitiveDict()
-        from utils import db
-        self.db = db.Database("general")
         self.session = aiohttp.ClientSession(loop=self.loop)
         self.highlight_cache = {}
         self.custom_flags = ["mute"]
