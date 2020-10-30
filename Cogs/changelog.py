@@ -32,10 +32,11 @@ changes = {
     "V1.4.14": "Fix tags being case-sensitive",
     "V1.4.15": "- automod overhaul!\nmore to follow in the coming days!",
     "V1.4 FINAL": "- customcommands are disabled while i sort out some things\n- quotes are gone :crab:\n- added the `streaming` announcer",
-    "V1.5.0": "- Moved everything to PSQL\n- custom commands are re-enabled\n- removed QOTD module"
+    "V1.5.0": "- Moved everything to PSQL\n- custom commands are re-enabled\n- removed QOTD module",
+    "V1.5.1": "- event commands have been renamed\n- fixed events\n- ~~hopefully~~ fixed some music errors\n- I'm still being developed I swear"
 }
 
-version = "1.5.0"
+version = "1.5.1"
 
 most_recent = changes["V"+version]
 

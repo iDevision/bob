@@ -9,7 +9,7 @@ from utils import commands, checks
 
 
 def setup(bot):
-    bot.add_cog(_events_node(bot))
+    bot.add_cog(events(bot))
 
 class Arguments(argparse.ArgumentParser):
     def error(self, message):
@@ -20,7 +20,7 @@ def parse_data(s: str, member: commands.Member):
     s = s.replace('{user.discrim}', member.discriminator).replace('{user.mention}', member.mention.replace("!", ""))
     return s
 
-class _events_node(commands.Cog):
+class events(commands.Cog):
     """
     create a custom welcome/leave message for your server! messages can be embeds or normal messages.
     requires the `Community Manager` role or higher.
@@ -30,17 +30,7 @@ class _events_node(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @checks.check_module('events')
-    @checks.check_manager()
-    @commands.group(brief = "see `help events`")
-    async def events(self, ctx):
-        """
-        create a custom welcome/leave message for your server! messages can be embeds or normal messages.
-        requires the `Community Manager` role or higher.
-        """
-        pass
-
-    @events.group(invoke_without_command=True)
+    @commands.group("welcome", invoke_without_command=True)
     @checks.check_manager()
     @checks.check_module('events')
     async def join(self, ctx, *, message=None):
@@ -61,7 +51,9 @@ class _events_node(commands.Cog):
         - {{user.discrim}} : the users discriminator. #0001 etc.
         - {{user.mention}} : mentions the user.
 
-        Ex. !events join embed --title {{user.mention}} has joined! --color blue
+        Ex. welcome embed --title {{user.mention}} has joined! --color blue
+
+        note that you need to add a channel after setting up the message, using `{ctx.prefix}welcome channel #channel`
         """
         prev = await self.bot.pg.fetchrow("SELECT member_join, member_join_msg FROM events WHERE guild_id = $1", ctx.guild.id)
         if prev is not None and prev[1] is not None and message is None:
@@ -77,7 +69,7 @@ class _events_node(commands.Cog):
 
         elif message:
             if message.startswith('embed'):
-                pred = await self.parser(ctx, message.replace("'", "\\'").replace('"', '\\"'))
+                pred, _ = await self.parser(ctx, message.replace("'", "\\'").replace('"', '\\"'))
             else:
                 pred = parse_data(message, ctx.author)
                 await ctx.send("`Here's an example of your welcome message:`\n"+pred)
@@ -169,7 +161,7 @@ class _events_node(commands.Cog):
         e.timestamp = datetime.datetime.utcnow()
         return e
 
-    @events.group(invoke_without_command=True)
+    @commands.group("goodbye", invoke_without_command=True)
     @checks.check_manager()
     @checks.check_module('events')
     async def leave(self, ctx, *, message=None):
@@ -190,7 +182,9 @@ class _events_node(commands.Cog):
         - {{user.discrim}} : the users discriminator. #0001 etc.
         - {{user.mention}} : mentions the user.
 
-        Ex. !events leave embed --title {user.mention} has joined! --color blue
+        Ex. !goodbye embed --title {user.mention} has joined! --color blue
+
+        note that you need to add a channel after setting up the message, using `{ctx.prefix}goodbye channel #channel`
         """
         prev = await self.bot.pg.fetchrow("SELECT member_leave, member_leave_msg FROM events WHERE guild_id = $1",
                                       ctx.guild.id)
@@ -258,7 +252,7 @@ class _events_node(commands.Cog):
 
             else:
                 s = parse_data(d['text'], member)
-                await chan.send(s)
+                await chan.send(s, allowed_mentions=commands.AllowedMentions(everyone=False, users=True, roles=False))
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
@@ -276,4 +270,4 @@ class _events_node(commands.Cog):
                 await chan.send(embed=e)
             else:
                 s = parse_data(d['text'], member)
-                await chan.send(s)
+                await chan.send(s, allowed_mentions=commands.AllowedMentions(everyone=False, users=True, roles=False))
