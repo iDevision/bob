@@ -4,7 +4,12 @@ import os
 import re
 import zlib
 import datetime
+import inspect
+import importlib
+import difflib
+from types import ModuleType, FunctionType
 
+import aiohttp
 import discord
 import discord.http
 import discord.abc
@@ -16,9 +21,25 @@ from discord.ext import commands as _root_commands, tasks as _root_tasks
 
 from utils import checks, errors, paginator
 from utils import commands
-import inspect
-import aiohttp
 
+class Node:
+    source = None
+    file = None
+    item = None
+    parent = None
+    module = None
+    children = None
+
+    def __init__(self, **kwargs):
+        for a, b in kwargs.items():
+            setattr(self, a, b)
+
+        self.children = []
+
+    def __str__(self):
+        return f"<Node {self.item} with parent {self.parent} in module {self.module.__name__} file={self.file}>"
+
+    __repr__ = __str__
 
 def setup(bot):
     bot.add_cog(_rtfm(bot))
@@ -87,6 +108,7 @@ class _rtfm(commands.Cog):
         self.defaults = {}
         self.pages = {}
         self.usage = {}
+        self.nodes = []
         self._rtfm_cache = None
         self.offload_unused_cache.start()
 
@@ -369,10 +391,10 @@ class _rtfm(commands.Cog):
                 self.defaults[record['guild_id']] = record['name']
             await self.build_rtfm_lookup_table(None) # caches all the pages
 
-    @commands.command()
+    @commands.command("rtfso")
     async def rtfs(self, ctx, search: commands.clean_content(escape_markdown=False)):
         """
-        gets the source for an object from the discord.py library
+        gets the source for an object from the discord.py library (Depreciated in favour of the new rtfs command)
         """
         overhead = ""
         raw_search = search
@@ -412,3 +434,125 @@ class _rtfm(commands.Cog):
         ret = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}"
         final = f"{overhead}[{location}]({ret}/{location}#L{firstlineno}-L{firstlineno + len(lines) - 1})"
         await ctx.send(embed=ctx.embed_invis(description=final))
+
+    @commands.command()
+    async def rtfs(self, ctx, *, item):
+        """
+        Indexes the dpy library for items matching the given input.
+        """
+        if not self.nodes:
+            self.do_index()
+
+        nodes = self.find_matches(item)
+        out = []
+        for node in nodes:
+            url = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}/{node.module.__name__.replace('.', '/')}.py#L{node.source[1]}-L{node.source[1] + len(node.source[0])}"
+            name = []
+            _node = node.parent
+            while _node:
+                name.append(_node.item.__name__)
+                _node = _node.parent
+
+            name = ".".join(list(reversed(name)) + [node.item.__name__])
+
+            out.append(f"[{name}]({url})")
+
+        await ctx.send(embed=ctx.embed_invis(description="\n".join(out)))
+
+    def index_module_layer(self, nodes: list, module):
+        dirs = dir(module)
+        for t in dirs:
+            if t.startswith("__"):
+                continue
+
+            gets = getattr(module, t)
+
+            if type(gets) != ModuleType and type(gets) not in (dict, list, int, str, bool):
+                if type(gets) in globals()['__builtins__'].values() and type(gets) is not type:
+                    continue
+
+                if type(gets) in (type(discord.opus.c_int16_ptr), type(discord.opus.EncoderStruct), type(None)):
+                    continue
+
+                if not isinstance(gets, type) and type(gets) != FunctionType:
+                    gets = gets.__class__
+
+                if gets.__module__ != module.__name__:
+                    continue
+
+                try:
+                    nodes.append(Node(source=inspect.getsourcelines(gets), file=module.__file__, item=gets, module=module))
+                except OSError:
+                    #print("no source for ", gets)
+                    pass
+
+    def index_class_layer(self, node: Node):
+        children = dir(node.item)
+
+        for child in children:
+            if child.startswith('__'):
+                continue
+
+            gets = getattr(node.item, child)
+            if isinstance(gets, property):
+                gets = gets.fget
+
+            try:
+                node.children.append(Node(source=inspect.getsourcelines(gets), file=node.file, item=gets, module=node.module, parent=node))
+            except OSError:
+                #print("no source for ", gets)
+                pass
+            except TypeError:
+                pass
+
+    def do_index(self):
+        nodes = []
+        base = os.path.dirname(discord.__file__)
+        def _import_mod(r: str, f: str):
+            r = r.replace(base, "").strip("\\")
+            assert f.endswith(".py")
+            modname = (r.replace("\\", ".").replace("/", ".") + "." if r else "") + f.replace(".py", "")
+            modname = modname.strip().strip(".")
+            if modname:
+                modname = "discord." + modname
+            else:
+                modname = "discord"
+
+            return importlib.import_module(modname)
+
+        for root, dirs, files in os.walk(base):
+            if root.endswith(("__pycache__", "bin")):
+                continue
+
+            for file in files:
+                if file.endswith(".py") and not file.startswith("__"):
+                    mod = _import_mod(root, file)
+                    self.index_module_layer(nodes, mod)
+
+        for node in nodes:
+            self.index_class_layer(node)
+
+        self.nodes = nodes
+
+    def find_matches(self, word: str):
+        items = set(self.nodes)
+
+        word = word.lower().split(".")
+        _last = []
+        for w in word:
+            words = [x.item.__name__.lower() for x in items]
+            closest = difflib.get_close_matches(w, words, n=1, cutoff=0.5)
+
+            if not closest:
+                return _last
+
+            items = _last = [discord.utils.find(lambda s: s.item.__name__.lower() == x, items) for x in closest]
+            item = items[0]
+
+            if isinstance(item, Node):
+                items = [*item.children]
+                continue
+            else:
+                return items
+
+        return _last
