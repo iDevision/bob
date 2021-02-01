@@ -109,6 +109,7 @@ class _rtfm(commands.Cog):
         self.pages = {}
         self.usage = {}
         self.nodes = []
+        self.map = {}
         self._rtfm_cache = None
         self.offload_unused_cache.start()
 
@@ -215,6 +216,8 @@ class _rtfm(commands.Cog):
 
         e.title = f"{key}: {obj}"
         e.description = '\n'.join(f'[`{key.replace("label:", "") if not obvious_labels else key}`]({url})' for key, url in matches)
+        e.url = "https://idevision.net/docs"
+        e.set_footer(text="rtfm api available at https://idevision.net/docs")
         await ctx.send(embed=e)
 
     @commands.group(aliases=['rtfd', "rtm", "rtd"], invoke_without_command=True, help="read-the-f*cking-docs!! see `!help rtfm`")
@@ -392,7 +395,7 @@ class _rtfm(commands.Cog):
             await self.build_rtfm_lookup_table(None) # caches all the pages
 
     @commands.command("rtfso")
-    async def rtfs(self, ctx, search: commands.clean_content(escape_markdown=False)):
+    async def rtfs_(self, ctx, search: commands.clean_content(escape_markdown=False)):
         """
         gets the source for an object from the discord.py library (Depreciated in favour of the new rtfs command)
         """
@@ -433,7 +436,7 @@ class _rtfm(commands.Cog):
 
         ret = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}"
         final = f"{overhead}[{location}]({ret}/{location}#L{firstlineno}-L{firstlineno + len(lines) - 1})"
-        await ctx.send(embed=ctx.embed_invis(description=final))
+        await ctx.send(embed=ctx.embed_invis(description=final).set_footer(text="This model sucks, use the base rtfs command"))
 
     @commands.command()
     async def rtfs(self, ctx, *, item):
@@ -446,7 +449,7 @@ class _rtfm(commands.Cog):
         nodes = self.find_matches(item)
         out = []
         for node in nodes:
-            url = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__}/{node.module.__name__.replace('.', '/')}.py#L{node.source[1]}-L{node.source[1] + len(node.source[0])}"
+            url = f"https://github.com/Rapptz/discord.py/blob/v{discord.__version__.strip('a')}/{node.module.__name__.replace('.', '/')}.py#L{node.source[1]}-L{node.source[1] + len(node.source[0])}"
             name = []
             _node = node.parent
             while _node:
@@ -457,7 +460,7 @@ class _rtfm(commands.Cog):
 
             out.append(f"[{name}]({url})")
 
-        await ctx.send(embed=ctx.embed_invis(description="\n".join(out)))
+        await ctx.send(embed=ctx.embed_invis(description="\n".join(out), url="https://idevision.net/docs", title="API result:"))
 
     def index_module_layer(self, nodes: list, module):
         dirs = dir(module)
@@ -533,26 +536,16 @@ class _rtfm(commands.Cog):
             self.index_class_layer(node)
 
         self.nodes = nodes
+        self.create_map()
+
+    def create_map(self):
+        for node in self.nodes:
+            if node.children:
+                for n in node.children:
+                    self.map[node.item.__name__ + "." + n.item.__name__] = n
+
+            self.map[node.item.__name__] = node
 
     def find_matches(self, word: str):
-        items = set(self.nodes)
-
-        word = word.lower().split(".")
-        _last = []
-        for w in word:
-            words = [x.item.__name__.lower() for x in items]
-            closest = difflib.get_close_matches(w, words, n=1, cutoff=0.5)
-
-            if not closest:
-                return _last
-
-            items = _last = [discord.utils.find(lambda s: s.item.__name__.lower() == x, items) for x in closest]
-            item = items[0]
-
-            if isinstance(item, Node):
-                items = [*item.children]
-                continue
-            else:
-                return items
-
-        return _last
+        vals = difflib.get_close_matches(word, list(self.map.keys()))
+        return [self.map[v] for v in vals]
